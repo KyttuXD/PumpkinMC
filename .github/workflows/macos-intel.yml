@@ -2,6 +2,7 @@ name: macOS Intel
 
 # Builds and tests Pumpkin on an Intel (x86_64) Mac and checks that the binary
 # runs on macOS 11 (Big Sur) and newer, so Intel Macs stuck on 11 or 12 are covered.
+# Fork-only file: upstream's workflows stay untouched so the fork syncs without conflicts.
 
 on:
   push:

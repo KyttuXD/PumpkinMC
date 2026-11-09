@@ -1,0 +1,103 @@
+name: macOS Intel Release
+
+# Adds an Intel (x86_64) macOS binary, built for macOS 11 and newer, to each release
+# the upstream Release workflow publishes. Fork-only file: upstream's workflows stay
+# untouched so the fork can sync with Pumpkin without conflicts.
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Release tag to add the Intel macOS binary to
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+  # Oldest macOS the binary must run on; check_macos_min.sh enforces it.
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
+  ASSET: pumpkin-X64-macOS
+
+jobs:
+  build:
+    name: Build and upload pumpkin-X64-macOS
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # Native Intel runner. GitHub keeps Intel macOS images until August 2027; after that,
+    # switch to macos-latest and add `--target x86_64-apple-darwin` (cross-compile).
+    runs-on: macos-15-intel
+    timeout-minutes: 240
+    steps:
+      - name: Find the release tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag_name }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          elif [ "$RUN_EVENT" = "push" ]; then
+            # Release runs on tag pushes, where head_branch is the tag name.
+            TAG="$RUN_BRANCH"
+          else
+            # A manual Release run: take the newest published release.
+            TAG=$(gh release list -R "$GITHUB_REPOSITORY" --exclude-drafts --limit 1 --json tagName -q '.[0].tagName')
+          fi
+          test -n "$TAG"
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null
+          echo "Release tag: $TAG"
+          echo "name=$TAG" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ steps.tag.outputs.name }}
+          submodules: recursive
+      - run: rustup update stable && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-macos-release-${{ env.MACOSX_DEPLOYMENT_TARGET }}
+
+      - name: Build release
+        run: cargo build --verbose --release
+
+      # The check script is fetched from the default branch, since older tags don't have it.
+      - name: Check minimum macOS version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/contents/.github/scripts/check_macos_min.sh" \
+            -H "Accept: application/vnd.github.raw" > "$RUNNER_TEMP/check_macos_min.sh"
+          bash "$RUNNER_TEMP/check_macos_min.sh" target/release/pumpkin
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          mkdir -p dist
+          cp target/release/pumpkin "dist/$ASSET"
+          cd dist
+          gh release upload "$TAG" "$ASSET" --clobber -R "$GITHUB_REPOSITORY"
+
+          # Add the binary to the release's checksums file, replacing an older line for it.
+          if gh release download "$TAG" -p checksums.sha256 -R "$GITHUB_REPOSITORY" 2>/dev/null; then
+            grep -v " $ASSET\$" checksums.sha256 > checksums.new || true
+          else
+            : > checksums.new
+          fi
+          shasum -a 256 "$ASSET" >> checksums.new
+          mv checksums.new checksums.sha256
+          cat checksums.sha256
+          gh release upload "$TAG" checksums.sha256 --clobber -R "$GITHUB_REPOSITORY"

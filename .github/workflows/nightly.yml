@@ -12,8 +12,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-Dwarnings"
-  # Oldest macOS the macOS binaries must run on (read by rustc and the cc crate).
-  MACOSX_DEPLOYMENT_TARGET: "11.0"
 
 jobs:
   check:
@@ -59,8 +57,6 @@ jobs:
             asset: pumpkin-ARM64-Windows.exe
           - os: macos-latest
             asset: pumpkin-ARM64-macOS
-          - os: macos-15-intel
-            asset: pumpkin-X64-macOS
     env:
       RUSTFLAGS: -Dwarnings ${{ matrix.rustflags }}
     steps:
@@ -74,9 +70,6 @@ jobs:
       - name: Build release
         shell: bash
         run: cargo build --verbose --release
-      - name: Check minimum macOS version
-        if: runner.os == 'macOS'
-        run: bash .github/scripts/check_macos_min.sh target/release/pumpkin
       - name: Prepare artifact
         shell: bash
         run: |
