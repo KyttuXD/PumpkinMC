@@ -1,0 +1,58 @@
+name: macOS Intel
+
+# Builds and tests Pumpkin on an Intel (x86_64) Mac and checks that the binary
+# runs on macOS 11 (Big Sur) and newer, so Intel Macs stuck on 11 or 12 are covered.
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+  # Oldest macOS the binary must run on. rustc and the cc crate (C dependencies) both
+  # read this, and check_macos_min.sh fails the job if the binary ends up needing newer.
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
+
+jobs:
+  build:
+    name: Build and test (x86_64, macOS 11+)
+    # Native Intel runner. GitHub keeps Intel macOS images until August 2027; after that,
+    # switch to macos-latest and add `--target x86_64-apple-darwin` (cross-compile).
+    runs-on: macos-15-intel
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - run: rustup update stable && rustup default stable
+      - uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-macos-${{ env.MACOSX_DEPLOYMENT_TARGET }}
+
+      - name: Test
+        run: cargo nextest run --workspace --verbose --no-tests=pass
+
+      - name: Build release
+        run: cargo build --verbose --release
+
+      - name: Check minimum macOS version
+        run: bash .github/scripts/check_macos_min.sh target/release/pumpkin
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p dist
+          cp target/release/pumpkin dist/pumpkin-X64-macOS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pumpkin-X64-macOS
+          compression-level: 9
+          path: dist/pumpkin-X64-macOS
