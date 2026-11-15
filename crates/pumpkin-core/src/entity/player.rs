@@ -6407,8 +6407,19 @@ impl Player {
 
     pub fn add_effect(&self, effect: Effect) {
         self.living_entity.add_effect(effect);
+        let active_effects = self
+            .living_entity
+            .active_effects
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .keys()
+            .map(|e| e.minecraft_name.to_string())
+            .collect();
         self.trigger_advancement(
-            crate::entity::player::advancement::trigger::AdvancementTrigger::EffectsChanged,
+            crate::entity::player::advancement::trigger::AdvancementTrigger::EffectsChanged {
+                active_effects,
+                source_type: None,
+            },
         );
     }
 

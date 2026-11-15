@@ -1317,7 +1317,9 @@ fn generate_condition_tokens(trigger: &str, val: &serde_json::Value) -> TokenStr
             }
             "minecraft:hero_of_the_village" => quote! { AdvancementCondition::HeroOfTheVillage },
             "minecraft:started_riding" => quote! { AdvancementCondition::StartedRiding },
-            "minecraft:effects_changed" => quote! { AdvancementCondition::EffectsChanged },
+            "minecraft:effects_changed" => {
+                quote! { AdvancementCondition::EffectsChanged { effects: &[], source: None } }
+            }
             "minecraft:impossible" => quote! { AdvancementCondition::Impossible },
             _ => quote! { AdvancementCondition::Empty },
         };
@@ -1814,7 +1816,21 @@ fn generate_condition_tokens(trigger: &str, val: &serde_json::Value) -> TokenStr
                 .unwrap_or("");
             quote! { AdvancementCondition::CrafterRecipeCrafted(#r) }
         }
-        "minecraft:effects_changed" => quote! { AdvancementCondition::EffectsChanged },
+        "minecraft:effects_changed" => {
+            let effects: Vec<&str> = val
+                .get("effects")
+                .and_then(|e| e.as_object())
+                .map(|m| m.keys().map(String::as_str).collect())
+                .unwrap_or_default();
+            let source_tok = match val.get("source") {
+                Some(s) => {
+                    let t = generate_entity_condition_tokens(s);
+                    quote! { Some(#t) }
+                }
+                None => quote! { None },
+            };
+            quote! { AdvancementCondition::EffectsChanged { effects: &[#(#effects),*], source: #source_tok } }
+        }
         "minecraft:spear_mobs" => {
             let cnt = val.get("count").and_then(|v| v.as_i64()).map(|v| v as i32);
             let c_tok = opt_i32_tokens(cnt);

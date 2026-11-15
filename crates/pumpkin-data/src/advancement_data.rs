@@ -302,7 +302,10 @@ pub enum AdvancementCondition {
     StartedRiding(Option<EntityCondition>),
     SummonedEntity(EntityCondition),
     CrafterRecipeCrafted(&'static str),
-    EffectsChanged,
+    EffectsChanged {
+        effects: &'static [&'static str],
+        source: Option<EntityCondition>,
+    },
     SpearMobs {
         count: Option<i32>,
     },
