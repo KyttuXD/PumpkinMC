@@ -2997,6 +2997,29 @@ impl World {
         }
     }
 
+    /// Picks the Y to spawn at for the world spawn column. The configured spawn Y is
+    /// used when it is a standable spot (solid block below, two non-solid blocks at
+    /// feet and head); otherwise this falls back to the top of the column.
+    pub fn resolve_spawn_y(&self, position: Vector2<i32>, spawn_y: i32) -> i32 {
+        let min_y = self.dimension.min_y;
+        if spawn_y > min_y && spawn_y + 1 < min_y + self.dimension.height {
+            let feet = BlockPos::new(position.x, spawn_y, position.y);
+            let below = self.get_block_state(&feet.down());
+            let feet_state = self.get_block_state(&feet);
+            let head_state = self.get_block_state(&feet.up());
+            if below.is_solid()
+                && !feet_state.is_solid()
+                && !head_state.is_solid()
+                && !feet_state.is_liquid()
+                && !head_state.is_liquid()
+            {
+                return spawn_y;
+            }
+        }
+        let top = self.get_top_block(position);
+        if top > min_y { top + 1 } else { spawn_y }
+    }
+
     /// Gets the y position of the first non air block from the top down
     pub fn get_top_block(&self, position: Vector2<i32>) -> i32 {
         let chunk_pos = Vector2::new(position.x >> 4, position.y >> 4);
@@ -3079,12 +3102,7 @@ impl World {
             let spawn_position = Vector2::new(level_info.spawn_x, level_info.spawn_z);
             let chunk_pos = Vector2::new(level_info.spawn_x >> 4, level_info.spawn_z >> 4);
             self.level.get_or_fetch_chunk(chunk_pos, |_| ()).await;
-            let top = self.get_top_block(spawn_position);
-            let pos_y = if top > self.dimension.min_y {
-                top + 1
-            } else {
-                level_info.spawn_y
-            };
+            let pos_y = self.resolve_spawn_y(spawn_position, level_info.spawn_y);
 
             let position = Vector3::new(
                 f64::from(level_info.spawn_x) + 0.5,
@@ -3804,12 +3822,7 @@ impl World {
             let spawn_position = Vector2::new(info.spawn_x, info.spawn_z);
             let chunk_pos = Vector2::new(info.spawn_x >> 4, info.spawn_z >> 4);
             self.level.get_or_fetch_chunk(chunk_pos, |_| ()).await;
-            let top = self.get_top_block(spawn_position);
-            let pos_y = if top > self.dimension.min_y {
-                top + 1
-            } else {
-                info.spawn_y
-            };
+            let pos_y = self.resolve_spawn_y(spawn_position, info.spawn_y);
 
             let position = Vector3::new(
                 f64::from(info.spawn_x) + 0.5,
@@ -4341,12 +4354,7 @@ impl World {
                 .level
                 .get_or_fetch_chunk(chunk_pos, |_| ())
                 .await;
-            let top = default_world.get_top_block(Vector2::new(spawn_x, spawn_z));
-            let pos_y = if top > default_world.dimension.min_y {
-                top + 1
-            } else {
-                spawn_y
-            };
+            let pos_y = default_world.resolve_spawn_y(Vector2::new(spawn_x, spawn_z), spawn_y);
 
             (
                 Vector3::new(
