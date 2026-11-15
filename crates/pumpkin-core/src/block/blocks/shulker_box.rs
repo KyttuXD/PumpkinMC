@@ -1,5 +1,7 @@
+use pumpkin_util::math::boundingbox::BoundingBox;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::Ordering;
 
 use crate::block::{
     GetComparatorOutputArgs, GetScreenHandlerFactoryArgs, OnPlaceArgs, OnSyncedBlockEventArgs,
@@ -12,6 +14,7 @@ use crate::block::{
 
 use crate::block::entities::shulker_box::ShulkerBoxBlockEntity;
 use pumpkin_data::BlockStateId;
+use pumpkin_data::FacingExt;
 use pumpkin_data::translation;
 use pumpkin_inventory::Inventory;
 use pumpkin_inventory::generic_container_screen_handler::create_generic_9x3;
@@ -71,6 +74,45 @@ impl BlockBehaviour for ShulkerBoxBlock {
     }
 
     fn normal_use(&self, args: NormalUseArgs<'_>) -> BlockActionResult {
+        // Vanilla: a closed shulker box cannot open if a block obstructs its lid.
+        // The check is skipped while the box is already being viewed.
+        let is_open = args
+            .world
+            .get_block_entity(args.position)
+            .and_then(|be| {
+                be.as_any()
+                    .downcast_ref::<ShulkerBoxBlockEntity>()
+                    .map(|sb| sb.viewers.current.load(Ordering::Relaxed) > 0)
+            })
+            .unwrap_or(false);
+        if !is_open {
+            let facing =
+                EndRodLikeProperties::from_state_id(args.world.get_block_state_id(args.position))
+                    .facing;
+            let dir = facing.to_block_direction();
+            let lid_pos = args.position.offset(dir.to_offset());
+            let off = dir.to_offset();
+            // Lid sweep region in the neighbour cell's local coordinates.
+            let eps = 1.0e-6;
+            let mut min = [eps; 3];
+            let mut max = [1.0 - eps; 3];
+            for (i, o) in [off.x, off.y, off.z].into_iter().enumerate() {
+                if o > 0 {
+                    max[i] = 0.5;
+                } else if o < 0 {
+                    min[i] = 0.5;
+                }
+            }
+            let lid = BoundingBox::new_array(min, max);
+            let lid_state = args.world.get_block_state(&lid_pos);
+            if lid_state
+                .get_block_collision_shapes()
+                .any(|shape| shape.intersects(&lid))
+            {
+                return BlockActionResult::Success;
+            }
+        }
+
         if let Some(factory) = self.get_screen_handler_factory(GetScreenHandlerFactoryArgs {
             server: args.server,
             world: args.world,
