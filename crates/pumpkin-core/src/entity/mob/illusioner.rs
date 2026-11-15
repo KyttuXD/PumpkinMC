@@ -10,8 +10,8 @@ use crate::entity::ai::target_match::TargetMatch;
 use crate::entity::{
     Entity,
     ai::goal::{
-        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal, swim::SwimGoal,
-        wander_around::WanderAroundGoal,
+        bow_attack::BowAttackGoal, look_around::RandomLookAroundGoal,
+        look_at_entity::LookAtEntityGoal, swim::SwimGoal, wander_around::WanderAroundGoal,
     },
     mob::{
         Mob, MobEntity,
@@ -57,6 +57,10 @@ impl IllusionerEntity {
             goal_selector.add_goal(1, Box::new(ObtainRaidLeaderBannerGoal));
             goal_selector.add_goal(2, Box::new(HoldGroundAttackGoal::new(10.0)));
             fleeing::apply(goal_selector, ILLUSIONER_FLEES);
+            // Vanilla `RangedBowAttackGoal(this, 0.5, 20, 15.0F)`.
+            // TODO: BlindnessSpellGoal and MirrorSpellGoal are not implemented (no clone
+            // entity or illusioner spell state exists yet).
+            goal_selector.add_goal(4, Box::new(BowAttackGoal::new(0.5, 20, 15.0)));
             goal_selector.add_goal(4, Box::new(LongDistancePatrolGoal::new(0.7, 0.595)));
             goal_selector.add_goal(4, Box::new(RaiderMoveThroughVillageGoal::new(1.05)));
             goal_selector.add_goal(4, Box::new(PathfindToRaidGoal::default()));
