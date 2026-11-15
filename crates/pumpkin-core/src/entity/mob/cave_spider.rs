@@ -14,8 +14,9 @@ use crate::entity::mob::spider::{SPIDER_FLEES, SPIDER_HUNTS};
 use crate::entity::{
     Entity, EntityBase,
     ai::goal::{
-        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal, revenge::RevengeGoal,
-        spider_attack::SpiderAttackGoal, swim::SwimGoal, wander_around::WanderAroundGoal,
+        leap_at_target::LeapAtTargetGoal, look_around::RandomLookAroundGoal,
+        look_at_entity::LookAtEntityGoal, revenge::RevengeGoal, spider_attack::SpiderAttackGoal,
+        swim::SwimGoal, wander_around::WanderAroundGoal,
     },
     mob::{Mob, MobEntity},
 };
@@ -46,7 +47,8 @@ impl CaveSpiderEntity {
 
             goal_selector.add_goal(1, Box::new(SwimGoal::default()));
             fleeing::apply(goal_selector, SPIDER_FLEES);
-            goal_selector.add_goal(3, SpiderAttackGoal::new(1.0, false));
+            goal_selector.add_goal(3, Box::new(LeapAtTargetGoal::new(0.4)));
+            goal_selector.add_goal(4, SpiderAttackGoal::new(1.0, false));
             goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(0.8)));
             goal_selector.add_goal(
                 6,
