@@ -1,7 +1,12 @@
+use crate::entity::mob::{
+    equipment::RegionalDifficulty,
+    spawn::{EntitySpawnReason, SpawnGroupData},
+};
 use crate::entity::{
     Entity, EntityBase,
     mob::{Mob, MobEntity, skeleton::SkeletonEntityBase},
 };
+use crate::world::World;
 use pumpkin_data::BlockState;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::Sound;
@@ -31,5 +36,28 @@ impl Mob for BoggedSkeletonEntity {
 
     fn get_mob_entity(&self) -> &MobEntity {
         &self.entity.mob_entity
+    }
+
+    fn finalize_spawn(
+        &self,
+        world: &Arc<World>,
+        _reason: EntitySpawnReason,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        super::finalize_spawn(self, world, group_data)
+    }
+
+    fn populate_default_equipment_slots(
+        &self,
+        world: &Arc<World>,
+        difficulty: &RegionalDifficulty,
+    ) {
+        self.entity
+            .populate_default_equipment_slots(world, difficulty);
+    }
+
+    fn populate_default_equipment_enchantments(&self, difficulty: &RegionalDifficulty) {
+        self.entity
+            .populate_default_equipment_enchantments(difficulty);
     }
 }

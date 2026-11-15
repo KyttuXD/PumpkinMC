@@ -17,7 +17,7 @@ use crate::entity::{
         swim::SwimGoal, wander_around::WanderAroundGoal,
     },
     ai::target_match::TargetMatch,
-    mob::{Mob, MobEntity, equipment::RegionalDifficulty},
+    mob::{Mob, MobEntity, equipment::RegionalDifficulty, spawn::SpawnGroupData},
 };
 use crate::world::World;
 
@@ -98,6 +98,20 @@ pub fn wants_to_pick_up<M: Mob + ?Sized>(mob: &M, stack: &ItemStack) -> bool {
         .item
         .has_tag(&pumpkin_data::tag::Item::MINECRAFT_SPEARS)
         && mob.can_hold_item(stack)
+}
+
+/// Vanilla `AbstractSkeleton.finalizeSpawn`: run the default finalization, then roll the
+/// default equipment (the bow) and enchantments, which nothing else populates.
+pub fn finalize_spawn<M: Mob + ?Sized>(
+    mob: &M,
+    world: &Arc<World>,
+    group_data: Option<SpawnGroupData>,
+) -> Option<SpawnGroupData> {
+    let group_data = mob.default_finalize_spawn(world, group_data);
+    let difficulty = RegionalDifficulty::at(world, mob.get_entity().pos.load());
+    mob.populate_default_equipment_slots(world, &difficulty);
+    mob.populate_default_equipment_enchantments(&difficulty);
+    group_data
 }
 
 impl Mob for SkeletonEntityBase {
