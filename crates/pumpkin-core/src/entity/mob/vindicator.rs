@@ -3,6 +3,7 @@ use std::sync::{Arc, Weak};
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::sound::Sound;
 use pumpkin_nbt::compound::NbtCompound;
+use pumpkin_util::Difficulty;
 
 use crate::entity::ai::behavior::fleeing::{self, Flee};
 use crate::entity::ai::behavior::hunting::{self, Hunt};
@@ -10,9 +11,9 @@ use crate::entity::ai::target_match::TargetMatch;
 use crate::entity::{
     Entity,
     ai::goal::{
-        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
-        melee_attack::MeleeAttackGoal, open_door::OpenDoorGoal, swim::SwimGoal,
-        wander_around::WanderAroundGoal,
+        Controls, Goal, break_door::BreakDoorGoal, look_around::RandomLookAroundGoal,
+        look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal, open_door::OpenDoorGoal,
+        swim::SwimGoal, wander_around::WanderAroundGoal,
     },
     mob::{
         Mob, MobEntity,
@@ -31,6 +32,54 @@ const VINDICATOR_HUNTS: &[Hunt] = &[
     Hunt::new(3, TargetMatch::VILLAGER_LIKE, true),
     Hunt::new(3, TargetMatch::Type(&EntityType::IRON_GOLEM), true),
 ];
+
+/// Vanilla `Vindicator.VindicatorBreakDoorGoal`: breaks doors on Normal and Hard, but only while
+/// the vindicator is part of an active raid.
+struct VindicatorBreakDoorGoal(BreakDoorGoal);
+
+impl VindicatorBreakDoorGoal {
+    fn new() -> Self {
+        Self(BreakDoorGoal::with_door_break_time(
+            6,
+            Arc::new(|difficulty| matches!(difficulty, Difficulty::Normal | Difficulty::Hard)),
+        ))
+    }
+}
+
+fn has_active_raid(mob: &dyn Mob) -> bool {
+    mob.as_raider().is_some_and(Raider::has_active_raid)
+}
+
+impl Goal for VindicatorBreakDoorGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        has_active_raid(mob) && self.0.can_start(mob)
+    }
+
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        has_active_raid(mob) && self.0.should_continue(mob)
+    }
+
+    fn start(&mut self, mob: &dyn Mob) {
+        self.0.start(mob);
+    }
+
+    fn stop(&mut self, mob: &dyn Mob) {
+        self.0.stop(mob);
+    }
+
+    fn tick(&mut self, mob: &dyn Mob) {
+        self.0.tick(mob);
+    }
+
+    fn should_run_every_tick(&self) -> bool {
+        self.0.should_run_every_tick()
+    }
+
+    /// Vanilla `VindicatorBreakDoorGoal` sets `Flag.MOVE`; the shared `BreakDoorGoal` does not.
+    fn controls(&self) -> Controls {
+        Controls::MOVE
+    }
+}
 
 pub struct VindicatorEntity {
     pub mob_entity: MobEntity,
@@ -55,6 +104,7 @@ impl VindicatorEntity {
             let goal_selector = &mob_arc.mob_entity.goals_selector;
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
+            goal_selector.add_goal(1, Box::new(VindicatorBreakDoorGoal::new()));
             goal_selector.add_goal(1, Box::new(OpenDoorGoal::new(false)));
             goal_selector.add_goal(1, Box::new(ObtainRaidLeaderBannerGoal));
             fleeing::apply(goal_selector, VINDICATOR_FLEES);
