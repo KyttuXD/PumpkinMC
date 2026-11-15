@@ -9,6 +9,7 @@ pub mod bow_attack;
 pub mod break_door;
 pub mod breath_air;
 pub mod breed;
+pub mod breeze_shoot;
 pub mod cat_lie_on_block;
 pub mod cat_sit_on_block;
 pub mod chase_player;
