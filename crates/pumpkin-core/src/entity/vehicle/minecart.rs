@@ -192,6 +192,9 @@ impl EntityBase for MinecartEntity {
             }
         }
 
+        // Top speed in blocks per tick, from the max_minecart_speed gamerule (default 8 => 0.4).
+        let max_speed = world.level_info.load().game_rules.max_minecart_speed as f64 / 20.0;
+
         if is_powered_rail || is_activator_rail {
             let props = PoweredRailLikeProperties::from_state_id(state_id);
             let powered = props.powered;
@@ -221,7 +224,7 @@ impl EntityBase for MinecartEntity {
                     let mut velocity = self.vehicle.entity.velocity.load();
                     let speed = velocity.length();
                     if speed > 0.01 {
-                        let new_speed = (speed + 0.06).min(0.4);
+                        let new_speed = (speed + 0.06).min(max_speed);
                         velocity = velocity
                             .normalize()
                             .multiply(new_speed, new_speed, new_speed);
@@ -332,10 +335,10 @@ impl EntityBase for MinecartEntity {
                         .x
                         .hypot(self.vehicle.entity.velocity.load().z);
 
-                    let max_speed = old_speed.clamp(0.15, 0.4);
-                    if speed > max_speed {
-                        velocity.x = (velocity.x / speed) * max_speed;
-                        velocity.z = (velocity.z / speed) * max_speed;
+                    let cap = old_speed.clamp(0.15_f64.min(max_speed), max_speed);
+                    if speed > cap {
+                        velocity.x = (velocity.x / speed) * cap;
+                        velocity.z = (velocity.z / speed) * cap;
                     }
                 }
                 self.vehicle.entity.velocity.store(velocity);
@@ -379,14 +382,21 @@ impl EntityBase for MinecartEntity {
             let mut target_position = pos;
 
             if in_corner {
-                let from0to1 = exit1 - exit0;
-                let from0topos = pos - block_center_bottom - exit0;
-                let dot_num = from0to1.dot(&from0topos);
-                let dot_den = from0to1.dot(&from0to1);
-                if dot_den != 0.0 {
-                    let travel_vector_from0 =
-                        from0to1.multiply(dot_num / dot_den, dot_num / dot_den, dot_num / dot_den);
-                    target_position = block_center_bottom.add(&exit0).add(&travel_vector_from0);
+                // Corner rails are a quarter arc of radius 0.5 centred on the block
+                // corner where the two exits meet. Project onto that arc, not onto the
+                // straight chord between the exits (which passes outside the rail and
+                // pulls freshly placed carts to the block corner).
+                let corner_xz = Vector3::new(
+                    block_center_bottom.x + exit0.x + exit1.x,
+                    block_center_bottom.y,
+                    block_center_bottom.z + exit0.z + exit1.z,
+                );
+                let to_pos = Vector3::new(pos.x - corner_xz.x, 0.0, pos.z - corner_xz.z);
+                let distance = to_pos.x.hypot(to_pos.z);
+                if distance > 1e-9 {
+                    let scale = 0.5 / distance;
+                    target_position.x = corner_xz.x + to_pos.x * scale;
+                    target_position.z = corner_xz.z + to_pos.z * scale;
                 }
             } else {
                 let z_snap = (exit0.x - exit1.x).abs() > 1e-5;

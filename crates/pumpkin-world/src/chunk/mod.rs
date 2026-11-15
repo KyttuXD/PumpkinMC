@@ -82,6 +82,9 @@ pub struct ChunkData {
     pub dirty: AtomicBool,
     pub inhabited_time: AtomicU64,
     pub custom_data: std::sync::Mutex<NbtCompound>,
+    /// Vanilla `structures` compound (`starts` and `References`), preserved verbatim so saving
+    /// a chunk does not strip structure data from the region file.
+    pub structures: std::sync::Mutex<NbtCompound>,
 }
 
 pub struct ChunkEntityData {
@@ -645,6 +648,7 @@ impl ChunkData {
             dirty: std::sync::atomic::AtomicBool::new(false),
             inhabited_time: std::sync::atomic::AtomicU64::new(0),
             custom_data: std::sync::Mutex::new(NbtCompound::new()),
+            structures: std::sync::Mutex::new(NbtCompound::new()),
         }
     }
 

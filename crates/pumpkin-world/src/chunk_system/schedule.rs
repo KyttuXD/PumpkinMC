@@ -1258,7 +1258,28 @@ impl GenerationSchedule {
                     fail_pos, stage, error
                 );
 
-                if let Some(mut holder) = self.chunk_map.remove(&pos) {
+                if stage == StagedChunkEnum::Empty {
+                    // Terminal read failure: retrying would just fail again (corrupt region,
+                    // permission denied, bad NBT) and regenerating could overwrite recoverable
+                    // data on disk. Drop the holder's tasks and waiting requesters instead.
+                    if let Some(mut holder) = self.chunk_map.remove(&pos) {
+                        for i in 0..holder.tasks.len() {
+                            if !holder.tasks[i].is_null() {
+                                self.waiting_for_chunks.remove(&holder.tasks[i]);
+                                self.drop_node(holder.tasks[i]);
+                                holder.tasks[i] = NodeKey::null();
+                            }
+                        }
+                        holder.current_stage = StagedChunkEnum::None;
+                        holder.dependency_stage = StagedChunkEnum::None;
+                        holder.target_stage = StagedChunkEnum::None;
+                        holder.chunk = None;
+                        self.chunk_map.insert(pos, holder);
+                        self.unload_chunks.insert(pos);
+                    }
+                    self.listener.cancel_single_chunk_listeners(pos);
+                    warn!("Chunk {:?} failed to load and was dropped without retry", pos);
+                } else if let Some(mut holder) = self.chunk_map.remove(&pos) {
                     let target_stage = holder.target_stage;
 
                     if !holder.occupied.is_null() {

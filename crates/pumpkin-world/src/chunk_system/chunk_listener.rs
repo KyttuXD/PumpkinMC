@@ -35,6 +35,15 @@ impl ChunkListener {
         rx
     }
 
+    /// Drops pending single-chunk listeners for `pos`, so their receivers observe a
+    /// closed channel instead of waiting forever on a chunk that will never load.
+    pub fn cancel_single_chunk_listeners(&self, pos: ChunkPos) {
+        self.single
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|(p, _)| *p != pos);
+    }
+
     pub fn add_global_chunk_listener(&self) -> Receiver<(ChunkPos, Weak<crate::chunk::ChunkData>)> {
         let (tx, rx) = crossbeam::channel::unbounded();
         self.global

@@ -1263,7 +1263,10 @@ pub enum CriterionConditions {
     StartedRiding(Option<EntityPredicate>),
     SummonedEntity(EntityPredicate),
     CrafterRecipeCrafted(String),
-    EffectsChanged,
+    EffectsChanged {
+        effects: Vec<String>,
+        source: Option<EntityPredicate>,
+    },
     SpearMobs {
         count: Option<i32>,
     },
@@ -1633,7 +1636,10 @@ impl From<pumpkin_data::advancement_data::AdvancementCondition> for CriterionCon
             AC::StartedRiding(p) => Self::StartedRiding(p.as_ref().map(from_entity_condition)),
             AC::SummonedEntity(e) => Self::SummonedEntity(from_entity_condition(&e)),
             AC::CrafterRecipeCrafted(r) => Self::CrafterRecipeCrafted(r.to_string()),
-            AC::EffectsChanged => Self::EffectsChanged,
+            AC::EffectsChanged { effects, source } => Self::EffectsChanged {
+                effects: effects.iter().map(|e| (*e).to_string()).collect(),
+                source: source.as_ref().map(from_entity_condition),
+            },
             AC::SpearMobs { count } => Self::SpearMobs { count },
             AC::Impossible => Self::Impossible,
             AC::Empty | AC::Tick => Self::Tick,
@@ -2059,7 +2065,14 @@ impl CriterionConditions {
                     .unwrap_or("")
                     .to_string(),
             ),
-            "minecraft:effects_changed" => Self::EffectsChanged,
+            "minecraft:effects_changed" => Self::EffectsChanged {
+                effects: val
+                    .get("effects")
+                    .and_then(Value::as_object)
+                    .map(|m| m.keys().cloned().collect())
+                    .unwrap_or_default(),
+                source: val.get("source").map(parse_entity_pred),
+            },
             "minecraft:spear_mobs" => Self::SpearMobs {
                 count: val.get("count").and_then(Value::as_i64).map(|v| v as i32),
             },

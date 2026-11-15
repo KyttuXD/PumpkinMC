@@ -625,6 +625,9 @@ impl Level {
             .map(|p| *p)
             .collect();
         for pos in scheduled_chunk_pos {
+            if !active_chunks.contains(&pos) {
+                continue;
+            }
             if let Some(chunk) = self.loaded_chunks.get(&pos) {
                 let chunk = chunk.value();
                 ticks.block_ticks.append(&mut chunk.block_ticks.step_tick());
@@ -809,7 +812,22 @@ impl Level {
                                 level.loaded_entity_chunks.insert(pos, chunk.clone());
                                 let _ = sender.send((Arc::downgrade(&chunk), true)).await;
                             }
-                            LoadedData::Missing(pos) | LoadedData::Error((pos, _)) => {
+                            LoadedData::Error((pos, err)) => {
+                                // Do not regenerate: the empty chunk would be saved over
+                                // the entity data still on disk.
+                                error!("Failed to load entity chunk {pos:?} from disk: {err}");
+                                // Hand back an empty, non-persisted chunk so callers counting
+                                // results do not stall.
+                                let empty = Arc::new(ChunkEntityData {
+                                    x: pos.x,
+                                    z: pos.y,
+                                    data: std::sync::Mutex::new(Vec::new()),
+                                    live: AtomicBool::new(false),
+                                    dirty: AtomicBool::new(false),
+                                });
+                                let _ = sender.send((Arc::downgrade(&empty), false)).await;
+                            }
+                            LoadedData::Missing(pos) => {
                                 let (tx, rx) = oneshot::channel();
                                 match level.pending_entity_generations.entry(pos) {
                                     dashmap::mapref::entry::Entry::Occupied(mut entry) => {
@@ -847,29 +865,40 @@ impl Level {
             return chunk.clone();
         }
 
-        if let Ok((chunk, _)) = self.load_single_entity_chunk(pos).await {
-            self.loaded_entity_chunks.insert(pos, chunk.clone());
-            chunk
-        } else {
-            let (tx, rx) = oneshot::channel();
-            match self.pending_entity_generations.entry(pos) {
-                dashmap::mapref::entry::Entry::Occupied(mut entry) => {
-                    entry.get_mut().push(tx);
-                }
-                dashmap::mapref::entry::Entry::Vacant(entry) => {
-                    entry.insert(vec![tx]);
-                    self.spawn_entity_generation(pos);
-                }
-            }
-            rx.await.unwrap_or_else(|_| {
-                Arc::new(ChunkEntityData {
-                    x: pos.x,
-                    z: pos.y,
-                    data: std::sync::Mutex::new(Vec::new()),
-                    live: AtomicBool::new(false),
-                    dirty: AtomicBool::new(false),
-                })
+        let empty_chunk = || {
+            Arc::new(ChunkEntityData {
+                x: pos.x,
+                z: pos.y,
+                data: std::sync::Mutex::new(Vec::new()),
+                live: AtomicBool::new(false),
+                dirty: AtomicBool::new(false),
             })
+        };
+
+        match self.load_single_entity_chunk(pos).await {
+            Ok((chunk, _)) => {
+                self.loaded_entity_chunks.insert(pos, chunk.clone());
+                chunk
+            }
+            Err(ChunkReadingError::ChunkNotExist) => {
+                let (tx, rx) = oneshot::channel();
+                match self.pending_entity_generations.entry(pos) {
+                    dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                        entry.get_mut().push(tx);
+                    }
+                    dashmap::mapref::entry::Entry::Vacant(entry) => {
+                        entry.insert(vec![tx]);
+                        self.spawn_entity_generation(pos);
+                    }
+                }
+                rx.await.unwrap_or_else(|_| empty_chunk())
+            }
+            Err(err) => {
+                // Never regenerate on a read error: the fresh chunk could be saved over
+                // the entity data still on disk.
+                error!("Failed to load entity chunk {pos:?} from disk: {err}");
+                empty_chunk()
+            }
         }
     }
 
@@ -1150,5 +1179,33 @@ mod tests {
 
         let end_level = Level::from_root_folder(&config, root.clone(), 0, Dimension::THE_END);
         assert_eq!(end_level.level_folder.dim_folder, root.join("DIM1"));
+    }
+
+    #[tokio::test]
+    async fn scheduled_ticks_wait_for_inactive_chunks() {
+        let temp_dir = TempDir::new().unwrap();
+        let level = Level::from_root_folder(
+            &LevelConfig::default(),
+            temp_dir.path().to_path_buf(),
+            0,
+            Dimension::OVERWORLD,
+        );
+        let chunk_pos = Vector2::new(2, 3);
+        let block_pos = BlockPos::new(32, 64, 48);
+        let fluid_pos = BlockPos::new(33, 64, 48);
+        level
+            .loaded_chunks
+            .insert(chunk_pos, ChunkData::empty_sync(chunk_pos.x, chunk_pos.y));
+        level.schedule_block_tick(&Block::STONE, block_pos, 0, TickPriority::Normal);
+        level.schedule_fluid_tick(&Fluid::WATER, fluid_pos, 0, TickPriority::Normal);
+
+        let inactive = FxHashSet::default();
+        assert!(level.get_tick_data(&inactive, 0).block_ticks.is_empty());
+        assert!(level.get_tick_data(&inactive, 0).fluid_ticks.is_empty());
+
+        let active = FxHashSet::from_iter([chunk_pos]);
+        let ticks = level.get_tick_data(&active, 0);
+        assert_eq!(ticks.block_ticks.len(), 1);
+        assert_eq!(ticks.fluid_ticks.len(), 1);
     }
 }

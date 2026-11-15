@@ -350,7 +350,10 @@ impl Mob for DrownedEntity {
     fn travel_in_water(&self, caller: &dyn EntityBase, gravity: f64, falling: bool) {
         let living = &self.get_mob_entity().living_entity;
         let entity = &living.entity;
-        if entity.is_under_water() && self.wants_to_swim() {
+        // Vanilla Drowned.travel gates the swim branch on isInWater (body touching water),
+        // not isUnderWater (eyes submerged). The swimming flag in base_tick keeps the
+        // underwater check, matching vanilla updateSwimming.
+        if entity.is_in_water() && self.wants_to_swim() {
             entity.update_velocity_from_input(living.movement_input.load(), SWIM_SPEED);
             living.make_move(caller);
             entity.velocity.store(entity.velocity.load() * SWIM_DRAG);

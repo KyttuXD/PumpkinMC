@@ -160,6 +160,8 @@ pub struct ProtoChunk {
     pub blending_data: Option<crate::generation::blender::blending_data::BlendingData>,
     pub pending_block_entities: Vec<NbtCompound>,
     pending_structure_entities: Vec<NbtCompound>,
+    pub structures: NbtCompound,
+    pub custom_data: NbtCompound,
     pub fluid_ticks: Vec<ScheduledTick<&'static Fluid>>,
     pub(crate) surface_height_cache: FxHashMap<u64, i32>,
     pub(crate) aquifer_sampler:
@@ -281,6 +283,8 @@ impl ProtoChunk {
             blending_data: None,
             pending_block_entities: Vec::new(),
             pending_structure_entities: Vec::new(),
+            structures: NbtCompound::new(),
+            custom_data: NbtCompound::new(),
             fluid_ticks: Vec::new(),
             surface_height_cache: FxHashMap::default(),
             aquifer_sampler: None,
@@ -303,6 +307,17 @@ impl ProtoChunk {
         proto_chunk
             .blending_data
             .clone_from(&chunk_data.blending_data);
+
+        proto_chunk.structures = chunk_data
+            .structures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        proto_chunk.custom_data = chunk_data
+            .custom_data
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
 
         // Chunks loaded from disk carry their block entities in the chunk data.
         // Keep them so the world can create the block entities when the chunk

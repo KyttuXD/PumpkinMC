@@ -97,13 +97,8 @@ impl JavaPlayer<'_> {
     }
 
     pub fn set_scoreboard(&self, scoreboard: Option<Scoreboard>) {
-        *self
-            .0
-            .custom_scoreboard
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            scoreboard.map(CustomScoreboard::Java);
-        self.0.send_scoreboard();
+        self.0
+            .set_scoreboard(scoreboard.map(CustomScoreboard::Java));
     }
 
     pub fn reset_scoreboard(&self) {
@@ -137,13 +132,8 @@ impl BedrockPlayer<'_> {
     }
 
     pub fn set_scoreboard(&self, scoreboard: Option<BedrockScoreboard>) {
-        *self
-            .0
-            .custom_scoreboard
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            scoreboard.map(CustomScoreboard::Bedrock);
-        self.0.send_scoreboard();
+        self.0
+            .set_scoreboard(scoreboard.map(CustomScoreboard::Bedrock));
     }
 
     pub fn reset_scoreboard(&self) {
@@ -285,8 +275,8 @@ use pumpkin_protocol::java::client::play::{
     CSetCamera, CSetContainerContent, CSetContainerProperty, CSetContainerSlot, CSetCursorItem,
     CSetExperience, CSetHealth, CSetPlayerInventory, CSetSelectedSlot, CSoundEffect, CStopSound,
     CSubtitle, CSystemChatMessage, CTabList, CTitleAnimation, CTitleText, CUnloadChunk,
-    CUpdateMobEffect, CUpdateTime, GameEvent, MapIcon, MapPatch, PlayerAction, PlayerInfoFlags,
-    PlayerSpawnData, PreviousMessage, Statistic,
+    CUpdateMobEffect, CUpdateTime, CWorldEvent, GameEvent, MapIcon, MapPatch, PlayerAction,
+    PlayerInfoFlags, PlayerSpawnData, PreviousMessage, Statistic,
 };
 use pumpkin_protocol::java::server::play::{
     SClickSlot, SContainerButtonClick, SRenameItem, SlotActionType,
@@ -727,6 +717,8 @@ pub struct Player {
     pub per_player_time: AtomicCell<Option<(u64, bool)>>,
     pub per_player_weather: AtomicCell<Option<PlayerWeather>>,
     pub custom_scoreboard: std::sync::Mutex<Option<CustomScoreboard>>,
+    /// Enabled under both scoreboard locks after the Java login snapshot is queued.
+    pub(crate) scoreboard_initialized: AtomicBool,
     pub compass_target: AtomicCell<Option<pumpkin_util::math::position::BlockPos>>,
     pub respawn_location: AtomicCell<Option<pumpkin_util::math::position::BlockPos>>,
     pub hidden_players: Mutex<std::collections::HashSet<uuid::Uuid>>,
@@ -957,6 +949,7 @@ impl Player {
             ClientPlatform::Bedrock(_) => true,
         };
         let initially_loaded = !supports_player_loaded;
+        let scoreboard_initialized = client.java().is_none();
 
         Self {
             living_entity,
@@ -1073,6 +1066,7 @@ impl Player {
             per_player_time: AtomicCell::new(None),
             per_player_weather: AtomicCell::new(None),
             custom_scoreboard: std::sync::Mutex::new(None),
+            scoreboard_initialized: AtomicBool::new(scoreboard_initialized),
             compass_target: AtomicCell::new(None),
             respawn_location: AtomicCell::new(None),
             hidden_players: Mutex::new(std::collections::HashSet::new()),
@@ -4505,18 +4499,55 @@ impl Player {
     }
 
     pub fn reset_scoreboard(&self) {
-        *self
+        self.set_scoreboard(None);
+    }
+
+    fn set_scoreboard(&self, scoreboard: Option<CustomScoreboard>) {
+        let mut guard = self
             .custom_scoreboard
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-        self.send_scoreboard();
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *guard = scoreboard;
+        self.send_scoreboard_locked(&guard, false);
     }
 
     pub fn send_scoreboard(&self) {
+        self.send_scoreboard_inner(false);
+    }
+
+    pub(crate) fn initialize_scoreboard(&self) {
+        self.send_scoreboard_inner(true);
+    }
+
+    fn send_scoreboard_inner(&self, initialize: bool) {
         let guard = self
             .custom_scoreboard
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.send_scoreboard_locked(&guard, initialize);
+    }
+
+    fn send_scoreboard_locked(
+        &self,
+        guard: &std::sync::MutexGuard<'_, Option<CustomScoreboard>>,
+        initialize: bool,
+    ) {
+        let world = self.world();
+        let world_scoreboard = world
+            .scoreboard
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        // Keep both boards locked until the snapshot is queued and live updates are enabled.
+        // A plugin may have populated either board while this player was logging in.
+        let initialized = self.scoreboard_initialized.load(Ordering::Acquire);
+        if initialize {
+            if initialized {
+                return;
+            }
+        } else if !initialized {
+            return;
+        }
         match guard.as_ref() {
             Some(CustomScoreboard::Java(custom))
                 if matches!(self.client.as_ref(), ClientPlatform::Java(_)) =>
@@ -4529,14 +4560,10 @@ impl Player {
                 custom.send_to_player(self);
             }
             _ => {
-                drop(guard);
-                self.world()
-                    .scoreboard
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .send_to_player(self);
+                world_scoreboard.send_to_player(self);
             }
         }
+        self.scoreboard_initialized.store(true, Ordering::Release);
     }
 
     pub fn get_team(&self) -> Option<crate::world::scoreboard::Team> {
@@ -4808,6 +4835,7 @@ impl Player {
         position: Vector3<f64>,
         yaw: Option<f32>,
         pitch: Option<f32>,
+        play_portal_sound: bool,
     ) {
         let current_world = self.living_entity.entity.world.load_full();
         let yaw = yaw.unwrap_or(new_world.level_info.load().spawn_yaw);
@@ -4933,6 +4961,15 @@ impl Player {
                 new_world.send_center_chunk(&player).await;
 
                 player.request_teleport(position, yaw, pitch);
+
+                if play_portal_sound {
+                    self.try_send_client_packet(&CWorldEvent::new(
+                        pumpkin_data::world::WorldEvent::SoundPortalTravel as i32,
+                        BlockPos::ZERO,
+                        0,
+                        false,
+                    ));
+                }
 
                 let mut changed_world_event = crate::plugin::api::events::player::player_changed_world::PlayerChangedWorldEvent {
                     player: player.clone(),
@@ -6370,8 +6407,19 @@ impl Player {
 
     pub fn add_effect(&self, effect: Effect) {
         self.living_entity.add_effect(effect);
+        let active_effects = self
+            .living_entity
+            .active_effects
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .keys()
+            .map(|e| e.minecraft_name.to_string())
+            .collect();
         self.trigger_advancement(
-            crate::entity::player::advancement::trigger::AdvancementTrigger::EffectsChanged,
+            crate::entity::player::advancement::trigger::AdvancementTrigger::EffectsChanged {
+                active_effects,
+                source_type: None,
+            },
         );
     }
 
@@ -6840,16 +6888,26 @@ impl Player {
         }
     }
 
-    /// Opens the inventory of the horse this player rides. `false` if it isn't riding one.
+    /// Opens the inventory of the vehicle this player rides. `false` if it isn't riding one.
     pub fn open_vehicle_inventory(self: &Arc<Self>) -> bool {
         let Some(vehicle) = self.get_entity().get_vehicle() else {
             return false;
         };
-        let Some(horse) = vehicle.get_mob().and_then(|mob| mob.as_abstract_horse()) else {
-            return false;
-        };
-        horse.open_custom_inventory_screen(self);
-        true
+
+        if let Some(horse) = vehicle.get_mob().and_then(|mob| mob.as_abstract_horse()) {
+            horse.open_custom_inventory_screen(self);
+            return true;
+        }
+
+        if let Some(boat) = vehicle
+            .cast_any()
+            .downcast_ref::<crate::entity::vehicle::boat::BoatEntity>()
+        {
+            boat.open_inventory(self);
+            return true;
+        }
+
+        false
     }
 
     /// Only rears and plays the sound; the rider's client simulates the jump itself.
@@ -7993,7 +8051,9 @@ impl EntityBase for Player {
             );
         } else if let Some(player_arc) = self.world().get_player_by_uuid(self.gameprofile.id) {
             self.spawn_task(async move {
-                player_arc.teleport_world(world, position, yaw, pitch).await;
+                player_arc
+                    .teleport_world(world, position, yaw, pitch, false)
+                    .await;
             });
         }
     }

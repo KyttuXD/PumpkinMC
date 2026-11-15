@@ -115,8 +115,14 @@ impl CreakingEntity {
             let goal_selector = &mob_arc.mob_entity.goals_selector;
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
-            goal_selector.add_goal(4, Box::new(MeleeAttackGoal::new(1.0, true)));
-            goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(
+                4,
+                Box::new(MeleeAttackGoal::new(1.0, true).gated_by(Self::mob_can_move)),
+            );
+            goal_selector.add_goal(
+                5,
+                Box::new(WanderAroundGoal::new(1.0).with_start_condition(Self::mob_can_move)),
+            );
             goal_selector.add_goal(
                 6,
                 LookAtEntityGoal::with_default(mob_weak.clone(), &EntityType::PLAYER, 8.0),
@@ -199,9 +205,17 @@ impl CreakingEntity {
             .set_synced_data(pumpkin_data::tracked_data::creaking::HOME_POS, pos);
     }
 
+    /// Goal gate: a watched creaking neither attacks nor wanders.
+    fn mob_can_move(mob: &dyn Mob) -> bool {
+        mob.cast_any()
+            .downcast_ref::<Self>()
+            .is_none_or(Self::can_move)
+    }
+
     pub fn stop_in_place(&self) {
         let entity = &self.mob_entity.living_entity.entity;
-        entity.velocity.store(Vector3::default());
+        let velocity = entity.velocity.load();
+        entity.velocity.store(Vector3::new(0.0, velocity.y, 0.0));
         self.mob_entity.steered().navigator().stop();
     }
 
@@ -458,6 +472,11 @@ impl Mob for CreakingEntity {
                 );
             }
             self.set_can_move(now_can_move);
+        }
+
+        // Frozen for as long as it is watched, not just on the tick it was first seen.
+        if !now_can_move {
+            self.mob_entity.steered().navigator().stop();
         }
 
         // Home Creaking Heart check

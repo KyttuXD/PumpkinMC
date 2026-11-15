@@ -461,8 +461,15 @@ pub struct BundleContentsImpl {
     pub items: Vec<crate::item_stack::ItemStack>,
 }
 impl PartialEq for BundleContentsImpl {
-    fn eq(&self, _other: &Self) -> bool {
-        false
+    fn eq(&self, other: &Self) -> bool {
+        // Must compare contents: an always-false `eq` makes every sync pass see the bundle as
+        // changed, so the client's slot is resent every tick and its item selection is reset.
+        self.items.len() == other.items.len()
+            && self
+                .items
+                .iter()
+                .zip(&other.items)
+                .all(|(a, b)| a.are_equal(b))
     }
 }
 impl Eq for BundleContentsImpl {}

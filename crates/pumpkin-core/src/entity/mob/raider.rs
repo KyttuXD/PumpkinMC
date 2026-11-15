@@ -17,6 +17,7 @@ use crate::entity::ai::goal::revenge::RevengeGoal;
 use crate::entity::ai::goal::{Controls, Goal};
 use crate::entity::ai::pathfinder::NavigatorGoal;
 use crate::entity::ai::target_match::TargetMatch;
+use crate::entity::item::ItemEntity;
 use crate::entity::mob::Mob;
 use crate::entity::mob::patrol::{PatrolData, PatrollingMonster};
 
@@ -61,8 +62,29 @@ pub fn create_ominous_banner() -> ItemStack {
 }
 
 #[must_use]
-pub const fn is_ominous_banner(stack: &ItemStack) -> bool {
+pub fn is_ominous_banner(stack: &ItemStack) -> bool {
+    use pumpkin_data::data_component_impl::CustomNameImpl;
     stack.item.id == Item::WHITE_BANNER.id
+        && stack
+            .get_data_component::<CustomNameImpl>()
+            .is_some_and(|custom| {
+                custom.name == TextComponent::translate("block.minecraft.ominous_banner", [])
+            })
+}
+
+/// Whether `entity` is a dropped item entity holding the raid banner.
+fn is_dropped_banner(entity: &dyn crate::entity::EntityBase) -> bool {
+    entity
+        .cast_any()
+        .downcast_ref::<ItemEntity>()
+        .is_some_and(|item| {
+            is_ominous_banner(
+                &item
+                    .get_item_stack()
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            )
+        })
 }
 
 pub struct RaiderData {
@@ -250,9 +272,7 @@ impl Goal for ObtainRaidLeaderBannerGoal {
         let bb = entity.bounding_box.load().expand(16.0, 4.0, 16.0);
         let nearby = world.get_entities_at_box(&bb);
 
-        nearby
-            .iter()
-            .any(|e| *e.get_entity().entity_type == EntityType::ITEM)
+        nearby.iter().any(|e| is_dropped_banner(e.as_ref()))
     }
 
     fn controls(&self) -> Controls {
@@ -274,7 +294,7 @@ impl Goal for ObtainRaidLeaderBannerGoal {
         let nearby = world.get_entities_at_box(&bb);
 
         for cand in nearby {
-            if *cand.get_entity().entity_type == EntityType::ITEM {
+            if is_dropped_banner(cand.as_ref()) {
                 let cand_pos = cand.get_entity().pos.load();
                 let dist = pos.squared_distance_to_vec(&cand_pos);
                 if dist < 2.0 {

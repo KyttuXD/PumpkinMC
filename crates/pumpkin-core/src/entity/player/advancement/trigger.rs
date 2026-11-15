@@ -158,7 +158,12 @@ pub enum AdvancementTrigger {
     CrafterRecipeCrafted {
         recipe_id: String,
     },
-    EffectsChanged,
+    EffectsChanged {
+        /// Minecraft names of every effect currently active on the player.
+        active_effects: Vec<String>,
+        /// Entity type that caused the effect, if known.
+        source_type: Option<String>,
+    },
     SpearMobs {
         count: i32,
     },
@@ -990,8 +995,24 @@ impl Player {
                 );
             }
 
-            AdvancementTrigger::EffectsChanged => {
-                self.trigger_criterion_event("minecraft:effects_changed", |_cond| true);
+            AdvancementTrigger::EffectsChanged {
+                active_effects,
+                source_type,
+            } => {
+                self.trigger_criterion_event("minecraft:effects_changed", |cond| match cond {
+                    CriterionConditions::EffectsChanged { effects, source } => {
+                        effects
+                            .iter()
+                            .all(|e| active_effects.iter().any(|a| predicate::matches_id(e, a)))
+                            && source.as_ref().is_none_or(|pred| {
+                                source_type
+                                    .as_deref()
+                                    .is_some_and(|t| pred.matches(t, None, None))
+                            })
+                    }
+                    CriterionConditions::Custom { .. } => true,
+                    _ => false,
+                });
             }
 
             AdvancementTrigger::SpearMobs { count } => {

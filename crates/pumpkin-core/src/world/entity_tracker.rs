@@ -671,6 +671,51 @@ impl TrackedEntity {
         }
 
         if let Some(living) = self.entity.get_living_entity() {
+            // Vanilla `ServerEntity.sendPairingData` sends the entity's attributes when a
+            // player starts tracking it; changes made before tracking (e.g. horse max health
+            // in `finalize_spawn`) were otherwise never broadcast to this client.
+            if let ClientPlatform::Java(client) = player.client.as_ref() {
+                let properties: Vec<pumpkin_protocol::java::client::play::Property> = living
+                    .attributes
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .iter()
+                    .filter_map(|(id, instance)| {
+                        let attribute = pumpkin_data::attributes::Attributes::ALL
+                            .iter()
+                            .find(|a| a.id == *id)?;
+                        if !attribute.client_syncable {
+                            return None;
+                        }
+                        let modifiers = instance
+                            .modifiers
+                            .iter()
+                            .map(|m| {
+                                pumpkin_protocol::java::client::play::AttributeModifier::new(
+                                    m.id.clone(),
+                                    m.amount,
+                                    m.operation as i8,
+                                )
+                            })
+                            .collect();
+                        Some(pumpkin_protocol::java::client::play::Property::new(
+                            VarInt(i32::from(attribute.id)),
+                            instance.base_value,
+                            modifiers,
+                        ))
+                    })
+                    .collect();
+                if !properties.is_empty() {
+                    let packet = pumpkin_protocol::java::client::play::CUpdateAttributes::new(
+                        self.entity_id.into(),
+                        properties,
+                    );
+                    if let Ok(data) = client.serialize_packet(&packet) {
+                        client.try_enqueue_packet(data);
+                    }
+                }
+            }
+
             if let Ok(equipment_guard) = living.entity_equipment.try_lock() {
                 let mut equipment_list = Vec::new();
                 for (slot, item_stack) in &equipment_guard.equipment {
