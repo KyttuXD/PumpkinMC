@@ -812,7 +812,22 @@ impl Level {
                                 level.loaded_entity_chunks.insert(pos, chunk.clone());
                                 let _ = sender.send((Arc::downgrade(&chunk), true)).await;
                             }
-                            LoadedData::Missing(pos) | LoadedData::Error((pos, _)) => {
+                            LoadedData::Error((pos, err)) => {
+                                // Do not regenerate: the empty chunk would be saved over
+                                // the entity data still on disk.
+                                error!("Failed to load entity chunk {pos:?} from disk: {err}");
+                                // Hand back an empty, non-persisted chunk so callers counting
+                                // results do not stall.
+                                let empty = Arc::new(ChunkEntityData {
+                                    x: pos.x,
+                                    z: pos.y,
+                                    data: std::sync::Mutex::new(Vec::new()),
+                                    live: AtomicBool::new(false),
+                                    dirty: AtomicBool::new(false),
+                                });
+                                let _ = sender.send((Arc::downgrade(&empty), false)).await;
+                            }
+                            LoadedData::Missing(pos) => {
                                 let (tx, rx) = oneshot::channel();
                                 match level.pending_entity_generations.entry(pos) {
                                     dashmap::mapref::entry::Entry::Occupied(mut entry) => {
@@ -850,29 +865,40 @@ impl Level {
             return chunk.clone();
         }
 
-        if let Ok((chunk, _)) = self.load_single_entity_chunk(pos).await {
-            self.loaded_entity_chunks.insert(pos, chunk.clone());
-            chunk
-        } else {
-            let (tx, rx) = oneshot::channel();
-            match self.pending_entity_generations.entry(pos) {
-                dashmap::mapref::entry::Entry::Occupied(mut entry) => {
-                    entry.get_mut().push(tx);
-                }
-                dashmap::mapref::entry::Entry::Vacant(entry) => {
-                    entry.insert(vec![tx]);
-                    self.spawn_entity_generation(pos);
-                }
-            }
-            rx.await.unwrap_or_else(|_| {
-                Arc::new(ChunkEntityData {
-                    x: pos.x,
-                    z: pos.y,
-                    data: std::sync::Mutex::new(Vec::new()),
-                    live: AtomicBool::new(false),
-                    dirty: AtomicBool::new(false),
-                })
+        let empty_chunk = || {
+            Arc::new(ChunkEntityData {
+                x: pos.x,
+                z: pos.y,
+                data: std::sync::Mutex::new(Vec::new()),
+                live: AtomicBool::new(false),
+                dirty: AtomicBool::new(false),
             })
+        };
+
+        match self.load_single_entity_chunk(pos).await {
+            Ok((chunk, _)) => {
+                self.loaded_entity_chunks.insert(pos, chunk.clone());
+                chunk
+            }
+            Err(ChunkReadingError::ChunkNotExist) => {
+                let (tx, rx) = oneshot::channel();
+                match self.pending_entity_generations.entry(pos) {
+                    dashmap::mapref::entry::Entry::Occupied(mut entry) => {
+                        entry.get_mut().push(tx);
+                    }
+                    dashmap::mapref::entry::Entry::Vacant(entry) => {
+                        entry.insert(vec![tx]);
+                        self.spawn_entity_generation(pos);
+                    }
+                }
+                rx.await.unwrap_or_else(|_| empty_chunk())
+            }
+            Err(err) => {
+                // Never regenerate on a read error: the fresh chunk could be saved over
+                // the entity data still on disk.
+                error!("Failed to load entity chunk {pos:?} from disk: {err}");
+                empty_chunk()
+            }
         }
     }
 
