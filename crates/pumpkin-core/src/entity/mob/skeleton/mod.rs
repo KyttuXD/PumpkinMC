@@ -53,6 +53,17 @@ impl SkeletonEntityBase {
 
     /// `extra` goes first, like vanilla subclasses adding targets before `super`.
     pub fn with_hunts(entity: Entity, extra: &[Hunt]) -> Arc<Self> {
+        // Vanilla reassessWeaponGoal: bow interval 40 ticks (20 on Hard). Bogged and
+        // parched fire slower: 70 (50 on Hard).
+        let hard = entity.world.load().level_info.load().difficulty == Difficulty::Hard;
+        let slow_archer = entity.entity_type.id == EntityType::BOGGED.id
+            || entity.entity_type.id == EntityType::PARCHED.id;
+        let attack_interval = match (slow_archer, hard) {
+            (true, true) => 50,
+            (true, false) => 70,
+            (false, true) => 20,
+            (false, false) => 40,
+        };
         let mob_entity = MobEntity::new(entity);
         let mob = Self { mob_entity };
         let mob_arc = Arc::new(mob);
@@ -68,8 +79,7 @@ impl SkeletonEntityBase {
             // TODO: RestrictSunGoal(2) and FleeSunGoal(3), once both match vanilla.
             fleeing::apply(goal_selector, SKELETON_FLEES);
             // Vanilla `reassessWeaponGoal`: the bow or the melee goal at 4, by the held weapon.
-            // TODO: attack interval per type and difficulty (vanilla 40, 20 on hard; bogged and parched 70, 50 on hard).
-            goal_selector.add_goal(4, Box::new(BowAttackGoal::new(1.0, 20, 15.0)));
+            goal_selector.add_goal(4, Box::new(BowAttackGoal::new(1.0, attack_interval, 15.0)));
             goal_selector.add_goal(
                 4,
                 Box::new(
