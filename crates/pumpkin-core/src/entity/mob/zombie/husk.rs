@@ -115,11 +115,10 @@ impl Mob for HuskEntity {
             .is_empty();
         if main_hand_empty && let Some(living) = target.get_living_entity() {
             let world = self.get_entity().world.load_full();
-            let difficulty =
-                RegionalDifficulty::at(&world, self.get_entity().pos.load()).effective_difficulty;
+            let difficulty = world.level_info.load().difficulty as i32;
             living.add_effect(Effect {
                 effect_type: &StatusEffect::HUNGER,
-                duration: HUNGER_TICKS_PER_DIFFICULTY * difficulty as i32,
+                duration: HUNGER_TICKS_PER_DIFFICULTY * difficulty,
                 amplifier: 0,
                 ambient: false,
                 show_particles: true,
