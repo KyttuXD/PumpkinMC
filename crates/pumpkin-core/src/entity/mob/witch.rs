@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Weak};
 
+use pumpkin_data::attributes::Attributes;
 use pumpkin_data::damage::DamageType;
 use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::effect::StatusEffect;
@@ -14,6 +15,7 @@ use pumpkin_data::tracked_data;
 
 use crate::entity::ai::behavior::hunting::{self, Hunt};
 use crate::entity::ai::target_match::TargetMatch;
+use crate::entity::attributes::{Modifier, ModifierOperation};
 use crate::entity::{
     Entity, EntityBase,
     ai::goal::{
@@ -31,6 +33,10 @@ use crate::entity::{
     },
     projectile::splash_potion::SplashPotionEntity,
 };
+
+/// Vanilla `Witch.SPEED_MODIFIER_DRINKING`: -0.25 added to movement speed while drinking.
+const SPEED_MODIFIER_DRINKING_ID: &str = "minecraft:drinking";
+const SPEED_MODIFIER_DRINKING: f64 = -0.25;
 
 fn create_potion_stack(item: &'static Item, potion: &'static Potion) -> ItemStack {
     use pumpkin_data::data_component::DataComponent;
@@ -116,6 +122,19 @@ impl WitchEntity {
             .living_entity
             .entity
             .set_synced_data(tracked_data::witch::DATA_USING_ITEM, drinking);
+        self.mob_entity
+            .living_entity
+            .update_attribute(&Attributes::MOVEMENT_SPEED, |speed| {
+                if drinking {
+                    speed.add_or_replace_modifier(Modifier {
+                        id: SPEED_MODIFIER_DRINKING_ID.to_string(),
+                        amount: SPEED_MODIFIER_DRINKING,
+                        operation: ModifierOperation::Add,
+                    });
+                } else {
+                    speed.remove_modifier(SPEED_MODIFIER_DRINKING_ID);
+                }
+            });
     }
 
     #[must_use]
