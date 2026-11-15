@@ -70,6 +70,8 @@ const BUILTIN_TEST_IDS: &[&str] = &[
     "pumpkin:falling_sand_lands",
     "pumpkin:scaffolding_distance_and_collapse",
     "pumpkin:command_block_chain_execution",
+    "pumpkin:setblock_reports_only_changes",
+    "pumpkin:fill_reports_only_changed_blocks",
     "pumpkin:hopper_transfers_to_chest",
     "pumpkin:tnt_redstone_ignites",
     "pumpkin:furnace_ignites_and_smelts",
@@ -83,6 +85,7 @@ const BUILTIN_TEST_IDS: &[&str] = &[
     "pumpkin:wither_pattern_spawns",
     "pumpkin:item_entities_merge",
     "pumpkin:zombie_pathfinds_to_villager",
+    "pumpkin:minecart_drops_item_when_destroyed",
     // redstone_wire_and_power (14)
     "pumpkin:redstone_wire_attenuation_1_to_4",
     "pumpkin:redstone_wire_attenuation_5_to_8",
@@ -230,7 +233,7 @@ const BUILTIN_TEST_IDS: &[&str] = &[
     "pumpkin:observer_detects_redstone_lamp_state_change",
     "pumpkin:observer_chain_propagates_pulse",
     "pumpkin:target_block_egg_hit_emits_pulse_and_clears",
-    // rails_and_fluids_extended (12)
+    // rails_and_fluids_extended (13)
     "pumpkin:powered_rail_deenergizes_beyond_8_blocks",
     "pumpkin:activator_rail_deenergizes_beyond_8_blocks",
     "pumpkin:powered_rail_bidirectional_boost_from_center",
@@ -241,6 +244,7 @@ const BUILTIN_TEST_IDS: &[&str] = &[
     "pumpkin:water_flows_downward_into_hole",
     "pumpkin:lava_source_turned_to_obsidian_by_water",
     "pumpkin:water_flow_breaks_redstone_torch",
+    "pumpkin:water_flow_keeps_structure_void",
     "pumpkin:sponge_absorbs_multi_block_water_pool",
     "pumpkin:sponge_does_not_absorb_lava",
     // commands_and_entities_extended (11)
@@ -458,6 +462,20 @@ pub fn ensure_builtin_game_tests_registered() {
             containers_and_commands::test_command_block_chain_execution,
         );
         register_function_test(
+            "pumpkin:setblock_reports_only_changes",
+            "pumpkin:empty_5x5x5",
+            20,
+            0,
+            containers_and_commands::test_setblock_reports_only_changes,
+        );
+        register_function_test(
+            "pumpkin:fill_reports_only_changed_blocks",
+            "pumpkin:empty_5x5x5",
+            20,
+            0,
+            containers_and_commands::test_fill_reports_only_changed_blocks,
+        );
+        register_function_test(
             "pumpkin:hopper_transfers_to_chest",
             "pumpkin:empty_3x5x3",
             60,
@@ -549,6 +567,13 @@ pub fn ensure_builtin_game_tests_registered() {
             3,
             1,
             entities_and_ai::test_zombie_pathfinds_to_villager,
+        );
+        register_function_test(
+            "pumpkin:minecart_drops_item_when_destroyed",
+            "pumpkin:empty_5x4x5",
+            20,
+            0,
+            entities_and_ai::test_minecart_drops_item_when_destroyed,
         );
 
         // redstone_wire_and_power (14)
@@ -1525,7 +1550,7 @@ pub fn ensure_builtin_game_tests_registered() {
             lamps_bulbs_and_noteblocks_extended::test_target_block_arrow_hit_20_tick_pulse,
         );
 
-        // rails_and_fluids_extended (12)
+        // rails_and_fluids_extended (13)
         register_function_test(
             "pumpkin:powered_rail_deenergizes_beyond_8_blocks",
             "pumpkin:empty_3x4x12",
@@ -1595,6 +1620,13 @@ pub fn ensure_builtin_game_tests_registered() {
             20,
             0,
             rails_and_fluids_extended::test_water_breaks_torch_and_carpet_in_path,
+        );
+        register_function_test(
+            "pumpkin:water_flow_keeps_structure_void",
+            "pumpkin:empty_5x4x5",
+            20,
+            0,
+            rails_and_fluids_extended::test_water_flow_keeps_structure_void,
         );
         register_function_test(
             "pumpkin:sponge_absorbs_multi_block_water_pool",

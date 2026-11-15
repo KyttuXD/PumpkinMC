@@ -108,7 +108,10 @@ impl EntityBase for BoatEntity {
         None
     }
 
-    fn tick(&self, _caller: &dyn EntityBase, _server: &Server) {
+    fn tick(&self, caller: &dyn EntityBase, server: &Server) {
+        // Run the base entity tick so fluid contact (lava damage/fire), fire ticks and
+        // out-of-world checks apply to boats.
+        self.vehicle.entity.tick(caller, server);
         self.vehicle.tick();
 
         let underwater = self.ticks_underwater.load();

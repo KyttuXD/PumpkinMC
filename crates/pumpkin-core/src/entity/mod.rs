@@ -4951,6 +4951,11 @@ impl Entity {
     }
 
     pub fn unleash(&self) {
+        self.try_unleash();
+    }
+
+    /// Returns true only if this call actually took the leash holder.
+    fn try_unleash(&self) -> bool {
         let world = self.world.load();
         if let Some(server) = world.server.upgrade() {
             let mut event =
@@ -4960,7 +4965,7 @@ impl Entity {
                 );
             server.plugin_manager.fire_blocking(&server, &mut event);
             if event.cancelled {
-                return;
+                return false;
             }
         }
 
@@ -4970,7 +4975,7 @@ impl Entity {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
         if old_holder.is_none() {
-            return;
+            return false;
         }
 
         if let Some(holder) = old_holder.as_ref().and_then(Weak::upgrade)
@@ -4987,6 +4992,23 @@ impl Entity {
         }
 
         self.send_leash_removed();
+        true
+    }
+
+    /// Detaches the leash and drops the lead item, like vanilla `dropLeash`.
+    pub fn drop_leash(&self) {
+        if !self.is_leashed() {
+            return;
+        }
+        if !self.try_unleash() {
+            return;
+        }
+        let world = self.world.load();
+        if world.level_info.load().game_rules.entity_drops {
+            let lead_item =
+                pumpkin_data::item_stack::ItemStack::new(1, &pumpkin_data::item::Item::LEAD);
+            world.drop_stack(&self.block_pos.load(), lead_item);
+        }
     }
 
     pub fn remove_leash(&self) {
@@ -5110,7 +5132,7 @@ impl Entity {
         let holder_entity = holder.get_entity();
 
         if !self.is_alive() || !holder_entity.is_alive() {
-            self.unleash();
+            self.drop_leash();
             return LeashTick::NotLeashed;
         }
 
@@ -5615,6 +5637,15 @@ impl Entity {
             // Vanilla: ridingCooldown = 60 (prevents immediate re-mount)
             passenger_entity.riding_cooldown.store(60, Relaxed);
             // TODO: world.emitGameEvent(passenger, GameEvent.ENTITY_DISMOUNT, vehicle.pos)
+
+            // Mirrors Cushion#removePassenger: get-up sound while the cushion stays alive.
+            if self.entity_type == &EntityType::CUSHION && self.is_alive() {
+                self.world.load().play_sound(
+                    pumpkin_data::sound::Sound::EntityCushionGetUp,
+                    pumpkin_data::sound::SoundCategory::Blocks,
+                    &self.pos.load(),
+                );
+            }
 
             passenger_entity
                 .bedrock_flags

@@ -1830,7 +1830,7 @@ impl Player {
             match attack_type {
                 AttackType::Knockback => knockback_strength += 1.0,
                 AttackType::Sweeping => {
-                    combat::spawn_sweep_particle(attacker_entity, &world, &pos);
+                    combat::spawn_sweep_particle(attacker_entity, &world);
 
                     let mut sweep_damage = 1.0;
                     if let Some(enchantments) = item_stack.get_data_component::<EnchantmentsImpl>()
@@ -6265,8 +6265,8 @@ impl Player {
                         let icon_z = raw_z.clamp(-128.0, 127.0) as i8;
 
                         let yaw = self.living_entity.entity.yaw.load();
-                        let icon_direction =
-                            ((((yaw * 16.0 / 360.0).round() as i32 + 8) % 16 + 16) % 16) as i8;
+                        let icon_direction = map_data
+                            .calculate_rotation(self.world().get_world_age(), f64::from(yaw));
 
                         let decoration_type = if is_off_map {
                             &pumpkin_data::map_decoration::MapDecorationType::PLAYER_OFF_MAP

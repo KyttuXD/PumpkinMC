@@ -1008,9 +1008,7 @@ impl pumpkin::plugin::world::HostWorld for PluginHostState {
         pitch: f32,
     ) -> wasmtime::Result<()> {
         let world_ref = self.get(&world)?;
-        let sound_name = format!("{sound:?}").to_lowercase().replace('_', ".");
-        let sound_data = pumpkin_data::sound::Sound::from_name(&sound_name)
-            .ok_or_else(|| wasmtime::Error::msg(format!("Unknown sound: {sound_name}")))?;
+        let sound_data = from_wit_sound(sound)?;
 
         let internal_category = from_wit_sound_category(category);
 
@@ -1397,6 +1395,33 @@ impl pumpkin::plugin::world::HostWorld for PluginHostState {
         nbt.put_int("x", pos.x);
         nbt.put_int("y", pos.y);
         nbt.put_int("z", pos.z);
+
+        // A loaded block entity never reads the pending NBT again, so swap in
+        // a new one like `/clone` does, which also sends it to clients.
+        if let Some(current) = world_ref.get_block_entity(&internal_pos) {
+            let Some(block_entity) = pumpkin_core::block::entities::block_entity_from_nbt(&nbt)
+            else {
+                return Ok(Err("NBT is not a valid block entity".to_string()));
+            };
+            // The block decides the block entity type, as in vanilla.
+            if block_entity.resource_location() != current.resource_location() {
+                return Ok(Err(format!(
+                    "NBT id {} does not match the block entity {} at this position",
+                    block_entity.resource_location(),
+                    current.resource_location()
+                )));
+            }
+            // Open screens hold the old block entity's inventory, and clicks
+            // there would no longer reach the block.
+            world_ref.close_container_screens_at(&internal_pos);
+            world_ref.add_block_entity(block_entity);
+            // Like vanilla `BlockEntity.setChanged`, so comparators see the change.
+            world_ref.update_neighbour_for_output_signal(
+                &internal_pos,
+                world_ref.get_block(&internal_pos),
+            );
+            return Ok(Ok(()));
+        }
 
         // Use add_block_entity_nbt for lazy loading — avoids broadcasting
         // a packet per tile entity during bulk operations.
@@ -2797,6 +2822,17 @@ impl pumpkin_world::generation::generator::CustomChunkGenerator for WasmChunkGen
     }
 }
 
+pub(crate) fn from_wit_sound(
+    sound: pumpkin::plugin::sounds::Sound,
+) -> wasmtime::Result<pumpkin_data::sound::Sound> {
+    // The WIT enum is generated from the same sound list as `Sound`, in the same order.
+    let index = sound as usize;
+    pumpkin_data::sound::Sound::slice()
+        .get(index)
+        .copied()
+        .ok_or_else(|| wasmtime::Error::msg(format!("Invalid sound index: {index}")))
+}
+
 #[must_use]
 pub const fn from_wit_sound_category(
     category: pumpkin::plugin::sounds::SoundCategory,
@@ -2883,6 +2919,32 @@ mod tests {
                 pumpkin_data::particle::Particle::from_id(wit as u16),
                 Some(internal)
             );
+        }
+    }
+
+    #[test]
+    fn wit_sounds_match_internal_sounds() {
+        let cases = [
+            (
+                pumpkin::plugin::sounds::Sound::EntityAllayAmbientWithItem,
+                pumpkin_data::sound::Sound::EntityAllayAmbientWithItem,
+            ),
+            (
+                pumpkin::plugin::sounds::Sound::EntityExperienceOrbPickup,
+                pumpkin_data::sound::Sound::EntityExperienceOrbPickup,
+            ),
+            (
+                pumpkin::plugin::sounds::Sound::MusicDisc11,
+                pumpkin_data::sound::Sound::MusicDisc11,
+            ),
+            (
+                pumpkin::plugin::sounds::Sound::BlockRedShrubPlace,
+                pumpkin_data::sound::Sound::BlockRedShrubPlace,
+            ),
+        ];
+
+        for (wit, internal) in cases {
+            assert_eq!(from_wit_sound(wit).ok(), Some(internal));
         }
     }
 }

@@ -2718,6 +2718,7 @@ impl LivingEntity {
             }
             self.movement_input.store(Vector3::default());
             self.jumping.store(false, Relaxed);
+            self.entity.drop_leash();
 
             // Like vanilla, stats go to the kill credit, loot and XP to the killing blow.
             let kill_credit = self.get_kill_credit();
@@ -3848,6 +3849,12 @@ impl LivingEntity {
             {
                 return false;
             }
+        }
+
+        if let Some(player) = caller.get_player()
+            && player.sleeping_since.load().is_some()
+        {
+            player.wake_up();
         }
 
         // Vanilla parity: entities in FREEZE_HURTS_EXTRA_TYPES take 5x freezing damage.

@@ -176,6 +176,14 @@ where
 /// and the value is a vector of dynamic event handlers.
 pub type HandlerMap = HashMap<&'static str, Vec<Arc<dyn DynEventHandler>>>;
 
+/// Inserts `handler` so the list stays in call order: from `Lowest` to `Highest`
+/// priority, and in registration order within one priority.
+fn insert_handler(handlers: &mut Vec<Arc<dyn DynEventHandler>>, handler: Arc<dyn DynEventHandler>) {
+    // `EventPriority` derives `Highest < Lowest`, so the list is sorted descending.
+    let index = handlers.partition_point(|h| h.get_priority() >= handler.get_priority());
+    handlers.insert(index, handler);
+}
+
 /// Plugin loading state
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PluginState {
@@ -229,8 +237,6 @@ pub enum ManagerError {
     LoaderError(#[from] LoaderError),
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
-    #[error("Dependency error: {0}")]
-    DependencyError(String),
 }
 
 impl Default for PluginManager {
@@ -425,8 +431,13 @@ impl PluginManager {
         self.loaders.read().await.clone()
     }
 
-    /// Helper for topological sort of plugins based on dependencies
-    fn topological_sort(plugins: &[(String, Vec<String>)]) -> Result<Vec<String>, String> {
+    /// Order plugins so that dependencies load before their dependents.
+    ///
+    /// Returns the load order together with the plugins that cannot be
+    /// loaded, each with the reason. A plugin whose dependencies can never
+    /// be satisfied (one is not installed, or they form a cycle) is left out
+    /// on its own, so it cannot stop the healthy plugins from loading.
+    fn topological_sort(plugins: &[(String, Vec<String>)]) -> (Vec<String>, Vec<(String, String)>) {
         fn visit(
             name: &str,
             deps_map: &HashMap<String, &Vec<String>>,
@@ -457,24 +468,30 @@ impl PluginManager {
             Ok(())
         }
         let mut sorted = Vec::new();
+        let mut skipped = Vec::new();
         let mut visited = HashSet::new();
-        let mut current_path = HashSet::new();
         let plugin_names: HashSet<String> = plugins.iter().map(|(n, _)| n.clone()).collect();
         let deps_map: HashMap<String, &Vec<String>> =
             plugins.iter().map(|(n, d)| (n.clone(), d)).collect();
 
         for (name, _) in plugins {
-            visit(
+            // One path per root: a failed traversal must not leave entries
+            // that would look like a cycle to the next root. Dependencies
+            // the failed run already loaded stay loaded.
+            let mut current_path = HashSet::new();
+            if let Err(reason) = visit(
                 name,
                 &deps_map,
                 &plugin_names,
                 &mut visited,
                 &mut current_path,
                 &mut sorted,
-            )?;
+            ) {
+                skipped.push((name.clone(), reason));
+            }
         }
 
-        Ok(sorted)
+        (sorted, skipped)
     }
 
     /// Ask the server owner if they allow the permissions requested by a plugin
@@ -483,8 +500,9 @@ impl PluginManager {
     /// `rustyline` console handle is neither `Send` nor `Sync`. Calling it from a
     /// different thread (e.g. the hot-reload watcher task) will panic.
     ///
-    /// Returns `(allowed, wait_time, cacheable)`. Non-main-thread denials are not
-    /// cacheable so the user gets prompted again on the next cold load.
+    /// Returns `(allowed, wait_time, cacheable)`. Denials without a prompt (non-main
+    /// thread, no interactive console) are not cacheable so the user gets prompted
+    /// again on the next load with a console.
     #[expect(clippy::print_stdout)]
     fn ask_permission_confirmation(
         &self,
@@ -529,7 +547,7 @@ impl PluginManager {
             "Do you want to allow these permissions and load the plugin?".bold()
         );
 
-        let mut rl_taken = if let Some(logger_option) = crate::LOGGER_IMPL.get()
+        let rl_taken = if let Some(logger_option) = crate::LOGGER_IMPL.get()
             && let Some((wrapper, _, _)) = logger_option
             && let Some(rl) = wrapper.take_readline()
         {
@@ -538,24 +556,22 @@ impl PluginManager {
             None
         };
 
-        let result = if let Some((_, ref mut rl)) = rl_taken {
-            rl.readline(&prompt).is_ok_and(|line| {
-                let input = line.trim().to_lowercase();
-                input == "y" || input == "yes"
-            })
-        } else {
+        let Some((wrapper, mut rl)) = rl_taken else {
             warn!(
-                "Console readline is not available; cannot prompt for plugin \"{}\" permissions",
-                metadata.name
+                "No interactive console to confirm permissions for plugin \"{}\"; pre-approve them with `allowed_permissions` in `[plugins.overrides.\"{}\"]`",
+                metadata.name, metadata.name
             );
-            false
+            return (false, start_time.elapsed(), false);
         };
 
-        if let Some((wrapper, rl)) = rl_taken {
-            wrapper.return_readline(rl);
-        }
+        // Only an answer is a decision; EOF or an interrupt leaves nothing to remember
+        let (result, cacheable) = rl.readline(&prompt).map_or((false, false), |line| {
+            let input = line.trim().to_lowercase();
+            (input == "y" || input == "yes", true)
+        });
+        wrapper.return_readline(rl);
 
-        (result, start_time.elapsed(), true)
+        (result, start_time.elapsed(), cacheable)
     }
 
     /// Spawn initialization for a single plugin
@@ -778,8 +794,10 @@ impl PluginManager {
             .map(|(_, m, _, _, _)| (m.name.clone(), m.dependencies.clone()))
             .collect();
 
-        let sorted_names =
-            Self::topological_sort(&metadata_list).map_err(ManagerError::DependencyError)?;
+        let (sorted_names, skipped) = Self::topological_sort(&metadata_list);
+        for (name, reason) in skipped {
+            error!("Skipping plugin {name}: {reason}");
+        }
 
         // Map names back to prepared plugins
         #[expect(clippy::type_complexity)]
@@ -1212,10 +1230,10 @@ impl PluginManager {
 
         self.handlers.rcu(|handlers| {
             let mut new_handlers = (**handlers).clone();
-            new_handlers
-                .entry(E::get_name_static())
-                .or_default()
-                .push(typed_handler.clone());
+            insert_handler(
+                new_handlers.entry(E::get_name_static()).or_default(),
+                typed_handler.clone(),
+            );
             Arc::new(new_handlers)
         });
     }
@@ -1350,6 +1368,38 @@ impl PluginManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugin::server::server_tick_start::ServerTickStartEvent;
+
+    struct NoopHandler;
+
+    impl EventHandler<ServerTickStartEvent> for NoopHandler {}
+
+    #[test]
+    fn handlers_run_by_priority_then_registration_order() {
+        let mut handlers = Vec::new();
+        for (source, priority) in [
+            ("normal-1", EventPriority::Normal),
+            ("highest", EventPriority::Highest),
+            ("lowest", EventPriority::Lowest),
+            ("normal-2", EventPriority::Normal),
+            ("low", EventPriority::Low),
+            ("high", EventPriority::High),
+        ] {
+            let handler = TypedEventHandler::<ServerTickStartEvent, _> {
+                handler: Arc::new(NoopHandler),
+                priority,
+                blocking: true,
+                source: Some(source.to_string()),
+                _phantom: std::marker::PhantomData,
+            };
+            insert_handler(&mut handlers, Arc::new(handler));
+        }
+        let order: Vec<_> = handlers.iter().filter_map(|h| h.source()).collect();
+        assert_eq!(
+            order,
+            ["lowest", "low", "normal-1", "normal-2", "high", "highest"]
+        );
+    }
 
     #[tokio::test]
     async fn topological_sort() {
@@ -1358,8 +1408,9 @@ mod tests {
             ("B".to_string(), vec!["C".to_string()]),
             ("C".to_string(), vec![]),
         ];
-        let sorted = PluginManager::topological_sort(&plugins).unwrap();
+        let (sorted, skipped) = PluginManager::topological_sort(&plugins);
         assert_eq!(sorted, vec!["C", "B", "A"]);
+        assert!(skipped.is_empty());
 
         let plugins_complex = vec![
             ("A".to_string(), vec!["B".to_string(), "C".to_string()]),
@@ -1367,20 +1418,62 @@ mod tests {
             ("C".to_string(), vec!["D".to_string()]),
             ("D".to_string(), vec![]),
         ];
-        let sorted = PluginManager::topological_sort(&plugins_complex).unwrap();
+        let (sorted, skipped) = PluginManager::topological_sort(&plugins_complex);
         // Multiple valid sorts possible, but D must be before B and C, and B, C must be before A.
         assert_eq!(sorted[0], "D");
         assert!(sorted[1] == "B" || sorted[1] == "C");
         assert!(sorted[2] == "B" || sorted[2] == "C");
         assert_eq!(sorted[3], "A");
+        assert!(skipped.is_empty());
 
         let plugins_circular = vec![
             ("A".to_string(), vec!["B".to_string()]),
             ("B".to_string(), vec!["A".to_string()]),
         ];
-        assert!(PluginManager::topological_sort(&plugins_circular).is_err());
+        let (sorted, skipped) = PluginManager::topological_sort(&plugins_circular);
+        assert!(sorted.is_empty());
+        assert_eq!(
+            skipped,
+            vec![
+                (
+                    "A".to_string(),
+                    "Circular dependency detected involving plugin: A".to_string()
+                ),
+                (
+                    "B".to_string(),
+                    "Circular dependency detected involving plugin: B".to_string()
+                ),
+            ]
+        );
 
         let plugins_missing = vec![("A".to_string(), vec!["B".to_string()])];
-        assert!(PluginManager::topological_sort(&plugins_missing).is_err());
+        let (sorted, skipped) = PluginManager::topological_sort(&plugins_missing);
+        assert!(sorted.is_empty());
+        assert_eq!(
+            skipped,
+            vec![(
+                "A".to_string(),
+                "Plugin A depends on missing plugin: B".to_string()
+            )]
+        );
+    }
+
+    /// One plugin that can never load must not stop the rest.
+    #[tokio::test]
+    async fn topological_sort_skips_only_the_broken_plugin() {
+        let plugins = vec![
+            ("Healthy".to_string(), vec![]),
+            ("Broken".to_string(), vec!["NotInstalled".to_string()]),
+            ("NeedsHealthy".to_string(), vec!["Healthy".to_string()]),
+        ];
+        let (sorted, skipped) = PluginManager::topological_sort(&plugins);
+        assert_eq!(sorted, vec!["Healthy", "NeedsHealthy"]);
+        assert_eq!(
+            skipped,
+            vec![(
+                "Broken".to_string(),
+                "Plugin Broken depends on missing plugin: NotInstalled".to_string()
+            )]
+        );
     }
 }
