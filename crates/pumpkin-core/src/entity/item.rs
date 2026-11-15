@@ -757,7 +757,9 @@ impl EntityBase for ItemEntity {
             .clone();
         let inserted = player.inventory.insert_stack_anywhere(&mut local_stack);
         let count_after = local_stack.item_count;
-        let is_empty = local_stack.is_empty();
+        // Creative players void whatever does not fit, so the entity must be
+        // removed (the client already dropped it via the take-item packet).
+        let is_empty = local_stack.is_empty() || player.is_creative();
         *self
             .item_stack
             .lock()
