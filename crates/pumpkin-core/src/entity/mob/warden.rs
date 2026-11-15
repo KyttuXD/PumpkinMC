@@ -5,8 +5,10 @@ use std::sync::{
 
 use pumpkin_data::BlockState;
 use pumpkin_data::{
+    damage::DamageType,
     effect::StatusEffect,
     entity::{EntityPose, EntityType},
+    particle::Particle,
     potion::Effect,
     sound::{Sound, SoundCategory},
 };
@@ -27,6 +29,11 @@ use crate::world::World;
 const EMERGE_DURATION: i32 = 134;
 const DARKNESS_DISPLAY_LIMIT: i32 = 200;
 const DARKNESS_DURATION: i32 = 260;
+const SONIC_BOOM_MIN_DISTANCE_SQ: f64 = 4.0;
+const SONIC_BOOM_MAX_DISTANCE_SQ: f64 = 225.0;
+const SONIC_BOOM_CHARGE_TICKS: i32 = 34;
+const SONIC_BOOM_COOLDOWN_TICKS: i32 = 40;
+const SONIC_BOOM_DAMAGE: f32 = 10.0;
 
 pub struct WardenEntity {
     pub mob_entity: MobEntity,
@@ -70,6 +77,125 @@ impl Goal for EmergeGoal {
     }
 }
 
+/// Vanilla `SonicBoom` behaviour: charge, then a 10 damage ranged hit that ignores armor and shields.
+#[derive(Default)]
+struct SonicBoomGoal {
+    charge: i32,
+    /// Entity `tick_count` at which the cooldown expires (counted in server ticks).
+    cooldown_until: i32,
+    done: bool,
+}
+
+impl SonicBoomGoal {
+    fn in_range(mob: &dyn Mob) -> Option<Arc<dyn EntityBase>> {
+        let target = mob.get_mob_entity().get_target()?;
+        let target_entity = target.get_entity();
+        if !target_entity.is_alive() {
+            return None;
+        }
+        let distance_sq = mob
+            .get_entity()
+            .pos
+            .load()
+            .squared_distance_to_vec(&target_entity.pos.load());
+        (SONIC_BOOM_MIN_DISTANCE_SQ..=SONIC_BOOM_MAX_DISTANCE_SQ)
+            .contains(&distance_sq)
+            .then_some(target)
+    }
+}
+
+impl Goal for SonicBoomGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        if mob.get_entity().tick_count.load(Ordering::Relaxed) < self.cooldown_until {
+            return false;
+        }
+        Self::in_range(mob).is_some_and(|target| mob.has_line_of_sight(target.get_entity()))
+    }
+
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        !self.done
+            && Self::in_range(mob).is_some_and(|target| mob.has_line_of_sight(target.get_entity()))
+    }
+
+    fn start(&mut self, mob: &dyn Mob) {
+        self.done = false;
+        self.charge = SONIC_BOOM_CHARGE_TICKS;
+        mob.get_mob_entity().steered().navigator().stop();
+        mob.play_entity_sound(Sound::EntityWardenSonicCharge, 3.0, 1.0);
+    }
+
+    fn stop(&mut self, _mob: &dyn Mob) {
+        self.charge = 0;
+    }
+
+    fn tick(&mut self, mob: &dyn Mob) {
+        let Some(target) = Self::in_range(mob) else {
+            return;
+        };
+        mob.get_mob_entity()
+            .look_control
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .look_at_entity_with_range(&target, 30.0, 30.0);
+
+        self.charge -= 1;
+        if self.charge > 0 {
+            return;
+        }
+
+        let entity = mob.get_entity();
+        let world = entity.world.load();
+        let origin = entity.pos.load().add_raw(0.0, entity.get_eye_height(), 0.0);
+        let target_entity = target.get_entity();
+        let aim = target_entity
+            .pos
+            .load()
+            .add_raw(0.0, target_entity.get_eye_height() * 0.5, 0.0);
+        let step = aim.sub(&origin);
+        let length = step.length();
+        if length > 0.0 {
+            let step = step.multiply(1.0 / length, 1.0 / length, 1.0 / length);
+            for i in 1..length.floor() as i32 {
+                let point = origin.add(&step.multiply(f64::from(i), f64::from(i), f64::from(i)));
+                world.spawn_particle(
+                    point,
+                    Vector3::new(0.0, 0.0, 0.0),
+                    0.0,
+                    1,
+                    Particle::SonicBoom,
+                );
+            }
+        }
+        world.play_sound_fine(
+            Sound::EntityWardenSonicBoom,
+            SoundCategory::Hostile,
+            &entity.pos.load(),
+            3.0,
+            1.0,
+        );
+        // SONIC_BOOM has the bypasses_armor and bypasses_shield damage type tags.
+        target.damage_with_context(
+            target.as_ref(),
+            SONIC_BOOM_DAMAGE,
+            DamageType::SONIC_BOOM,
+            None,
+            Some(entity),
+            Some(entity),
+        );
+        self.cooldown_until = entity.tick_count.load(Ordering::Relaxed) + SONIC_BOOM_COOLDOWN_TICKS;
+        self.charge = 0;
+        self.done = true;
+    }
+
+    fn should_run_every_tick(&self) -> bool {
+        true
+    }
+
+    fn controls(&self) -> Controls {
+        Controls::MOVE | Controls::LOOK
+    }
+}
+
 impl WardenEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
@@ -89,6 +215,7 @@ impl WardenEntity {
 
             goal_selector.add_goal(0, Box::new(EmergeGoal { emerge_ticks }));
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
+            goal_selector.add_goal(3, Box::new(SonicBoomGoal::default()));
             goal_selector.add_goal(4, Box::new(MeleeAttackGoal::new(1.0, true)));
             goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(0.5)));
             goal_selector.add_goal(
