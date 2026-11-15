@@ -2004,7 +2004,8 @@ impl World {
                 if let Some(block_entity) = self.get_block_entity(&block_pos)
                     && let Some(nbt) = block_entity.chunk_data_nbt()
                 {
-                    let bytes = pumpkin_nbt::Nbt::from(nbt).write_unnamed();
+                    let bytes =
+                        pumpkin_nbt::Nbt::from(block_entity.client_update_tag(nbt)).write_unnamed();
                     self.broadcast_to_chunk(
                         chunk_pos,
                         &CBlockEntityData::new(
@@ -2077,7 +2078,8 @@ impl World {
                     if let Some(block_entity) = self.get_block_entity(block_pos)
                         && let Some(nbt) = block_entity.chunk_data_nbt()
                     {
-                        let bytes = pumpkin_nbt::Nbt::from(nbt).write_unnamed();
+                        let bytes = pumpkin_nbt::Nbt::from(block_entity.client_update_tag(nbt))
+                            .write_unnamed();
                         self.broadcast_to_chunk(
                             chunk_pos,
                             &CBlockEntityData::new(
@@ -7016,7 +7018,8 @@ impl World {
         let entity_id = block_entity.resource_location().to_string();
 
         if let Some(nbt) = &block_entity_nbt {
-            let bytes = pumpkin_nbt::Nbt::from(nbt.clone()).write_unnamed();
+            let bytes =
+                pumpkin_nbt::Nbt::from(block_entity.client_update_tag(nbt.clone())).write_unnamed();
             self.broadcast_to_chunk(
                 chunk_pos,
                 &CBlockEntityData::new(
@@ -7136,7 +7139,8 @@ impl World {
         let block_entity_nbt = block_entity.chunk_data_nbt();
 
         if let Some(nbt) = &block_entity_nbt {
-            let bytes = pumpkin_nbt::Nbt::from(nbt.clone()).write_unnamed();
+            let bytes =
+                pumpkin_nbt::Nbt::from(block_entity.client_update_tag(nbt.clone())).write_unnamed();
             self.broadcast_to_chunk(
                 chunk_pos,
                 &CBlockEntityData::new(
