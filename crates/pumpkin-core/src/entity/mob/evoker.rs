@@ -11,6 +11,7 @@ use pumpkin_util::math::vector3::Vector3;
 use crate::entity::ai::behavior::fleeing::{self, Flee};
 use crate::entity::ai::behavior::hunting::{self, Hunt};
 use crate::entity::ai::target_match::TargetMatch;
+use crate::entity::mob::vex::VexEntity;
 use crate::entity::{
     Entity, EntityBase,
     ai::goal::{
@@ -473,8 +474,9 @@ impl Goal for EvokerSummonSpellGoal {
             let evoker_pos = evoker_ent.pos.load();
 
             for _ in 0..3 {
-                let offset_x = (rand::random::<i32>() % 5 - 2) as f64;
-                let offset_z = (rand::random::<i32>() % 5 - 2) as f64;
+                // Vanilla: -2 + nextInt(5), so the offset is -2..=2 on both axes.
+                let offset_x = f64::from(rand::random_range(-2..=2));
+                let offset_z = f64::from(rand::random_range(-2..=2));
                 let spawn_pos = Vector3::new(
                     evoker_pos.x + offset_x,
                     evoker_pos.y + 1.0,
@@ -482,6 +484,11 @@ impl Goal for EvokerSummonSpellGoal {
                 );
 
                 let vex = from_type(&EntityType::VEX, spawn_pos, &world, Uuid::new_v4());
+                if let Some(mob) = vex.get_mob()
+                    && let Some(vex_entity) = mob.cast_any().downcast_ref::<VexEntity>()
+                {
+                    vex_entity.set_limited_life(20 * (30 + rand::random_range(0..90)));
+                }
                 world.spawn_entity(vex);
             }
         }
