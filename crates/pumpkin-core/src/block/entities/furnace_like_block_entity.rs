@@ -115,15 +115,24 @@ macro_rules! impl_cooking_block_entity_base {
                     .recipes_used
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let mut total_xp: f32 = 0.0;
+                let mut total_xp: i32 = 0;
                 for (recipe_id, count) in recipes.iter() {
                     // Look up the recipe's XP value
                     if let Some(xp) = pumpkin_data::recipes::get_recipe_experience(recipe_id) {
-                        total_xp += xp * (*count as f32);
+                        // Vanilla `createExperience`: the fractional part is awarded
+                        // as one extra point with that probability, so e.g. 0.7 XP
+                        // per ingot is not rounded down to nothing.
+                        let amount = xp * (*count as f32);
+                        let whole = amount.floor();
+                        let fraction = amount - whole;
+                        total_xp += whole as i32;
+                        if fraction > 0.0 && ::rand::random::<f32>() < fraction {
+                            total_xp += 1;
+                        }
                     }
                 }
                 recipes.clear();
-                total_xp.floor() as i32
+                total_xp
             }
 
             fn can_accept_recipe_output(
