@@ -1781,6 +1781,9 @@ pub trait Mob: EntityBase + Send + Sync {
         !self.get_entity().has_passengers()
     }
 
+    /// Called after equipment was successfully sheared off this mob.
+    fn on_equipment_sheared(&self, _player: &Arc<Player>, _sheared: &ItemStack) {}
+
     fn attempt_to_shear_equipment(&self, player: &Arc<Player>, shears: &mut ItemStack) -> bool {
         let mob_entity = self.get_mob_entity();
         let living = &mob_entity.living_entity;
@@ -1835,8 +1838,9 @@ pub trait Mob: EntityBase + Send + Sync {
         mob_entity.set_item_slot(&slot, ItemStack::EMPTY.clone());
         world.emit_game_event(GameEvent::Unequip.name(), entity.pos.load());
         world.emit_game_event(GameEvent::Shear.name(), entity.pos.load());
-        entity.spawn_at_location(stack);
+        entity.spawn_at_location(stack.clone());
         world.play_sound_event(&shearing_sound, SoundCategory::Neutral, &entity.pos.load());
+        self.on_equipment_sheared(player, &stack);
         true
     }
 

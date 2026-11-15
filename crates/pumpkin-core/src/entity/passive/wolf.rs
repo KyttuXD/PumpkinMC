@@ -196,6 +196,17 @@ impl Mob for WolfEntity {
         self.is_owned_by(&player.gameprofile.id)
     }
 
+    fn on_equipment_sheared(&self, player: &Arc<Player>, sheared: &ItemStack) {
+        if sheared.get_item() == &Item::WOLF_ARMOR {
+            player.trigger_advancement(
+                crate::entity::player::advancement::trigger::AdvancementTrigger::PlayerShearedEquipment {
+                    entity_type: "minecraft:wolf".to_string(),
+                    item_id: "minecraft:wolf_armor".to_string(),
+                },
+            );
+        }
+    }
+
     fn mob_play_step_sound(&self, _pos: &BlockPos, _state: &BlockState) {
         let sound_variant = WolfSoundVariant::from_id(self.sound_variant.load(Ordering::Relaxed))
             .unwrap_or_default();
@@ -392,15 +403,6 @@ impl Mob for WolfEntity {
             }
 
             if self.is_owned_by(&player.gameprofile.id) {
-                if item == &Item::SHEARS {
-                    player.trigger_advancement(
-                        crate::entity::player::advancement::trigger::AdvancementTrigger::PlayerShearedEquipment {
-                            entity_type: "minecraft:wolf".to_string(),
-                            item_id: "minecraft:wolf_armor".to_string(),
-                        },
-                    );
-                }
-
                 if let Some(dye) =
                     item_stack.get_data_component::<pumpkin_data::data_component_impl::DyeImpl>()
                     && dye.color.id() != self.get_collar_color()
