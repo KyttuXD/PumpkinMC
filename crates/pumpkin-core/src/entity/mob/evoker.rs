@@ -326,7 +326,7 @@ impl Goal for EvokerAttackSpellGoal {
             let dist_sq = evoker_pos.squared_distance_to_vec(&target_pos);
             let world = evoker_ent.world.load();
 
-            if dist_sq < 81.0 {
+            if dist_sq < 9.0 {
                 // Close range: concentric rings around Evoker
                 for i in 0..5 {
                     let angle = angle_towards_target + (i as f32) * std::f32::consts::PI * 0.4;
