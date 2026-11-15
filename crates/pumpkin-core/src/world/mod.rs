@@ -3586,7 +3586,7 @@ impl World {
                     .get()
                     .into(), // TODO: sim view dinstance
                 false,
-                true,
+                !server.level_info.load().game_rules.immediate_respawn,
                 false,
                 PlayerSpawnData::new(
                     self.dimension.clone(),

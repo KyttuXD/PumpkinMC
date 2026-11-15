@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use pumpkin_data::game_rules::{GameRule, GameRuleRegistry, GameRuleValue};
+use pumpkin_protocol::java::client::play::{CGameEvent, GameEvent};
 use pumpkin_util::PermissionLvl;
 use pumpkin_util::permission::{Permission, PermissionDefault, PermissionRegistry};
 use pumpkin_util::text::TextComponent;
@@ -96,6 +97,17 @@ impl CommandExecutor for SetBoolExecutor {
                         player.update_chunk_tickets_for_gamemode();
                     }
                 }
+            }
+        }
+
+        if self.0 == GameRule::ImmediateRespawn {
+            // The client only learns this through a game event, 1.0 skips the death screen.
+            let packet = CGameEvent::new(
+                GameEvent::EnabledRespawnScreen,
+                if arg_value { 1.0 } else { 0.0 },
+            );
+            for world in context.server().worlds.load().iter() {
+                world.broadcast_packet_all(&packet);
             }
         }
 
