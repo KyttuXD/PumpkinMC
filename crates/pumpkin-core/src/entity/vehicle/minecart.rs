@@ -379,14 +379,21 @@ impl EntityBase for MinecartEntity {
             let mut target_position = pos;
 
             if in_corner {
-                let from0to1 = exit1 - exit0;
-                let from0topos = pos - block_center_bottom - exit0;
-                let dot_num = from0to1.dot(&from0topos);
-                let dot_den = from0to1.dot(&from0to1);
-                if dot_den != 0.0 {
-                    let travel_vector_from0 =
-                        from0to1.multiply(dot_num / dot_den, dot_num / dot_den, dot_num / dot_den);
-                    target_position = block_center_bottom.add(&exit0).add(&travel_vector_from0);
+                // Corner rails are a quarter arc of radius 0.5 centred on the block
+                // corner where the two exits meet. Project onto that arc, not onto the
+                // straight chord between the exits (which passes outside the rail and
+                // pulls freshly placed carts to the block corner).
+                let corner_xz = Vector3::new(
+                    block_center_bottom.x + exit0.x + exit1.x,
+                    block_center_bottom.y,
+                    block_center_bottom.z + exit0.z + exit1.z,
+                );
+                let to_pos = Vector3::new(pos.x - corner_xz.x, 0.0, pos.z - corner_xz.z);
+                let distance = to_pos.x.hypot(to_pos.z);
+                if distance > 1e-9 {
+                    let scale = 0.5 / distance;
+                    target_position.x = corner_xz.x + to_pos.x * scale;
+                    target_position.z = corner_xz.z + to_pos.z * scale;
                 }
             } else {
                 let z_snap = (exit0.x - exit1.x).abs() > 1e-5;
