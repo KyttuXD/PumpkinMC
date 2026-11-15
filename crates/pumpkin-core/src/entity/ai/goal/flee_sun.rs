@@ -41,11 +41,8 @@ impl FleeSunGoal {
                 mob_pos.0.z + offset_z,
             );
 
-            let block_at = world.get_block_state(&check_pos);
-            let block_above = world.get_block_state(&check_pos.up());
-            let block_below = world.get_block_state(&check_pos.down());
-
-            if !block_at.is_solid() && !block_above.is_solid() && block_below.is_solid() {
+            // Vanilla getHidePos: any position the sky cannot reach.
+            if !world.can_see_sky(&check_pos) {
                 return Some(Vector3::new(
                     f64::from(check_pos.0.x) + 0.5,
                     f64::from(check_pos.0.y),
@@ -69,6 +66,16 @@ impl Goal for FleeSunGoal {
         }
 
         if sun_burn::is_protected(mob) {
+            return false;
+        }
+
+        // Vanilla only flees while standing under open sky.
+        if !mob
+            .get_entity()
+            .world
+            .load()
+            .can_see_sky(&mob.get_entity().block_pos.load())
+        {
             return false;
         }
 
