@@ -156,7 +156,20 @@ pub async fn io_read_work(
                         break;
                     }
                 }
-                LoadedData::Missing(pos) | LoadedData::Error((pos, _)) => {
+                LoadedData::Error((pos, err)) => {
+                    // Never regenerate on a read error: the fresh chunk would later be saved
+                    // over the (possibly recoverable) data still on disk.
+                    error!("Failed to load chunk {pos:?} from disk: {err}");
+                    let failure = RecvChunk::GenerationFailure {
+                        pos,
+                        stage: StagedChunkEnum::Empty,
+                        error: err.to_string(),
+                    };
+                    if send.send((pos, failure)).is_err() {
+                        break;
+                    }
+                }
+                LoadedData::Missing(pos) => {
                     if send
                         .send((
                             pos,
