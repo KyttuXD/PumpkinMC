@@ -412,7 +412,8 @@ impl Goal for SlimeAttackGoal {
             let my_pos = slime.entity.living_entity.entity.pos.load();
             let dx = pos.x - my_pos.x;
             let dz = pos.z - my_pos.z;
-            let yaw = dx.atan2(dz).to_degrees() as f32;
+            // Same convention as Ghast and the mob look helpers: negate atan2.
+            let yaw = (-dx.atan2(dz)).to_degrees() as f32;
             slime.cube_data().target_yaw.store(yaw);
         }
         slime
