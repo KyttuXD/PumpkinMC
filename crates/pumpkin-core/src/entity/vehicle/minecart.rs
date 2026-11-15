@@ -192,6 +192,9 @@ impl EntityBase for MinecartEntity {
             }
         }
 
+        // Top speed in blocks per tick, from the max_minecart_speed gamerule (default 8 => 0.4).
+        let max_speed = world.level_info.load().game_rules.max_minecart_speed as f64 / 20.0;
+
         if is_powered_rail || is_activator_rail {
             let props = PoweredRailLikeProperties::from_state_id(state_id);
             let powered = props.powered;
@@ -221,7 +224,7 @@ impl EntityBase for MinecartEntity {
                     let mut velocity = self.vehicle.entity.velocity.load();
                     let speed = velocity.length();
                     if speed > 0.01 {
-                        let new_speed = (speed + 0.06).min(0.4);
+                        let new_speed = (speed + 0.06).min(max_speed);
                         velocity = velocity
                             .normalize()
                             .multiply(new_speed, new_speed, new_speed);
@@ -332,10 +335,10 @@ impl EntityBase for MinecartEntity {
                         .x
                         .hypot(self.vehicle.entity.velocity.load().z);
 
-                    let max_speed = old_speed.clamp(0.15, 0.4);
-                    if speed > max_speed {
-                        velocity.x = (velocity.x / speed) * max_speed;
-                        velocity.z = (velocity.z / speed) * max_speed;
+                    let cap = old_speed.clamp(0.15_f64.min(max_speed), max_speed);
+                    if speed > cap {
+                        velocity.x = (velocity.x / speed) * cap;
+                        velocity.z = (velocity.z / speed) * cap;
                     }
                 }
                 self.vehicle.entity.velocity.store(velocity);
