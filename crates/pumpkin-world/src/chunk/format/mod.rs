@@ -472,6 +472,11 @@ impl ChunkData {
             .cloned()
             .unwrap_or_default();
 
+        let structures = root_tag
+            .get_compound("structures")
+            .cloned()
+            .unwrap_or_default();
+
         Ok(Self {
             section,
             heightmap: std::sync::Mutex::new(heightmaps),
@@ -488,6 +493,7 @@ impl ChunkData {
             blending_data: None,
             inhabited_time: AtomicU64::new(root_tag.get_long("InhabitedTime").unwrap_or(0) as u64),
             custom_data: std::sync::Mutex::new(custom_data),
+            structures: std::sync::Mutex::new(structures),
         })
     }
 
@@ -690,6 +696,14 @@ impl ChunkData {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !custom_data.is_empty() {
             root_compound.put_compound("PumpkinCustomData", custom_data.clone());
+        }
+
+        let structures = self
+            .structures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !structures.is_empty() {
+            root_compound.put_compound("structures", structures.clone());
         }
 
         let nbt = pumpkin_nbt::Nbt::from(root_compound);
@@ -1145,6 +1159,7 @@ impl ChunkData {
             blending_data: None,
             inhabited_time: AtomicU64::new(inhabited_time),
             custom_data: std::sync::Mutex::new(custom_data),
+            structures: std::sync::Mutex::new(NbtCompound::new()),
         })
     }
 
